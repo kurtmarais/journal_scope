@@ -108,7 +108,7 @@ def parse_entry(e: dict, limited: bool = False) -> dict:
         "coverage_last_year": int(end) if str(end or "").isdigit() else None,
         "homepage": links.get("homepage"),
         "scopus_url": links.get("scopus-source"),
-        "ranks_unavailable": limited or (citescore is not None and not ranks),
+        "ranks_unavailable": not ranks and (limited or citescore is not None),
     }
     return data
 
@@ -161,11 +161,13 @@ def _error_text(status: int, body: dict) -> str:
 
 async def detail(fetcher: Fetcher, issn: str, key: str, token: str | None) -> tuple[dict | None, str | None]:
     """Returns (data, note). data is None when the ISSN is not in Scopus."""
-    url = f"{API}/issn/{quote(issn)}?view=CITESCORE"
-    status, body = await _get(fetcher, url, key, token)
+    # CITESCORE has the subject ranks; keys without that entitlement get 400/403,
+    # so fall back to ENHANCED, then STANDARD (CiteScore value, no ranks).
     limited = False
-    if status == 403:   # key is fine but no CiteScore entitlement: use the basic view
-        status, body = await _get(fetcher, f"{API}/issn/{quote(issn)}?view=STANDARD", key, token)
+    for view in ("CITESCORE", "ENHANCED", "STANDARD"):
+        status, body = await _get(fetcher, f"{API}/issn/{quote(issn)}?view={view}", key, token)
+        if status not in (400, 403):
+            break
         limited = True
     if status == 404:
         return None, None
@@ -174,9 +176,10 @@ async def detail(fetcher: Fetcher, issn: str, key: str, token: str | None) -> tu
     items = entries(body)
     if not items:
         return None, None
+    data = parse_entry(items[0], limited=limited)
     note = ("CiteScore ranks and quartiles need institutional access (use the PC on your university network or VPN, "
-            "or add an institution token in Settings).") if limited else None
-    return parse_entry(items[0], limited=limited), note
+            "or add an institution token in Settings).") if data["ranks_unavailable"] else None
+    return data, note
 
 
 async def lookup(fetcher: Fetcher, query: str, issn: str | None, source_id: str | None = None,

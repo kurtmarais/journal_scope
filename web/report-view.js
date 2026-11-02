@@ -324,7 +324,7 @@ export function parseScopusEntry(e, limited = false) {
     best_quartile: ranks.length ? ranks[0].quartile : null, best_percentile: ranks.length ? ranks[0].percentile : null,
     sjr, coverage: start && end ? `${start}-${end}` : null, coverage_last_year: num(end),
     homepage: links.homepage || null, scopus_url: links["scopus-source"] || null,
-    ranks_unavailable: limited || (citescore != null && !ranks.length),
+    ranks_unavailable: !ranks.length && (limited || citescore != null),
   };
 }
 

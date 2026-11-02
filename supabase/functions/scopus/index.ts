@@ -41,9 +41,11 @@ Deno.serve(async (req) => {
 
   let resp = await fetch(target, { headers });
   let limited = false;
-  if (resp.status === 403 && target.includes("view=CITESCORE")) {
-    // Key works but no CiteScore entitlement: basic view (CiteScore without ranks).
-    resp = await fetch(target.replace("view=CITESCORE", "view=STANDARD"), { headers });
+  // CITESCORE has the subject ranks; without that entitlement Elsevier answers
+  // 400/403, so fall back to ENHANCED, then STANDARD (CiteScore value, no ranks).
+  for (const view of ["ENHANCED", "STANDARD"]) {
+    if (!target.includes("view=CITESCORE") || (resp.status !== 400 && resp.status !== 403)) break;
+    resp = await fetch(target.replace("view=CITESCORE", `view=${view}`), { headers });
     limited = true;
   }
   if (resp.status === 404) return reply({ "serial-metadata-response": { entry: [] } });

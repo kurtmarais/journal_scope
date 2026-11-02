@@ -103,3 +103,22 @@ def test_title_with_several_matches_asks_to_choose(tmp_path):
     assert [c["source_id"] for c in r["candidates"]] == ["1532-0464", "2168-2194", "2590-177X"]
     r2 = asyncio.run(build_report(fetcher, "Biomedical", source_id="1532-0464", scopus_key="test-key"))
     assert r2["identity"]["title"] == "Journal of Biomedical Informatics" and not r2["candidates"]
+
+
+def test_scopus_falls_back_when_citescore_view_is_refused(tmp_path):
+    fetcher = FakeFetcher(make_xlsx(tmp_path / "l.xlsx"))
+    seen = []
+    real_get = fetcher.get
+
+    async def get(url, headers=None):
+        seen.append(url.rsplit("view=", 1)[-1])
+        r = await real_get(url, headers)
+        if "view=CITESCORE" in url:
+            r.status_code, r.text = 400, '{"service-error":{"status":{"statusCode":"INVALID_INPUT","statusText":"View not allowed"}}}'
+        return r
+
+    fetcher.get = get
+    r = asyncio.run(build_report(fetcher, "1532-0464", scopus_key="test-key"))
+    sc = r["sources"]["scopus"]
+    assert seen[:2] == ["CITESCORE", "ENHANCED"] and sc["status"] == "found"
+    assert sc["data"]["subject_ranks"] and sc["data"]["ranks_unavailable"] is False and sc["note"] is None
