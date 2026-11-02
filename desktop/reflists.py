@@ -1,11 +1,12 @@
 """Reference lists the phone searches directly (no PC needed at lookup time).
 
-About weekly, the desktop app downloads three complete lists and loads them
+About weekly, the desktop app downloads two complete lists and loads them
 into the user's Supabase project:
 
-  SCImago  journal-rank export (CSV)      -> ref_scimago
   CREST    DHET-approved master list      -> ref_crest
   SANLiC   R&P agreement title list       -> ref_sanlic
+
+(Scopus/CiteScore comes from Elsevier's API through a Supabase Edge Function.)
 
 Rows are written with a new batch id, then rows from older batches are
 deleted, so the phone never sees an empty list mid-refresh.
@@ -13,9 +14,7 @@ deleted, so the phone never sees an empty list mid-refresh.
 
 from __future__ import annotations
 
-import csv
 import hashlib
-import io
 import re
 import time
 from pathlib import Path
@@ -25,83 +24,11 @@ from urllib.parse import urljoin
 from openpyxl import load_workbook
 
 from app.sources import sanlic
-from app.util import clean_text, find_issns, normalise_issn, normalise_title, to_float
+from app.util import clean_text, normalise_issn, normalise_title
 
-SCIMAGO_EXPORT = "https://www.scimagojr.com/journalrank.php?out=xls"
 CREST_HOME = "https://db.crest.sun.ac.za/zapublications/"
 REFRESH_EVERY = 7 * 86400
 RETRY_AFTER = 86400
-
-
-# ------------------------------------------------------------------ SCImago
-def _num(value: str | None) -> float | None:
-    if value is None:
-        return None
-    v = value.strip().replace(" ", "")
-    if not v:
-        return None
-    if "," in v and "." not in v:
-        v = v.replace(",", ".")          # SCImago uses decimal commas
-    return to_float(v)
-
-
-def parse_scimago_csv(data: bytes) -> tuple[list[dict], int | None]:
-    text = data.decode("utf-8-sig", errors="replace")
-    reader = csv.reader(io.StringIO(text), delimiter=";")
-    header = next(reader, [])
-    cols = {h.strip().lower(): i for i, h in enumerate(header)}
-
-    def find(*names: str) -> int | None:
-        for n in names:
-            for h, i in cols.items():
-                if h == n or h.startswith(n):
-                    return i
-        return None
-
-    year = None
-    for h in header:
-        m = re.search(r"total docs\.?\s*\((\d{4})\)", h, re.I)
-        if m:
-            year = int(m.group(1))
-    idx = {
-        "key": find("sourceid"), "title": find("title"), "type": find("type"), "issn": find("issn"),
-        "sjr": find("sjr"), "q": find("sjr best quartile"), "h": find("h index"),
-        "cites": find("cites / doc. (2years)", "citations / doc. (2years)", "cites/doc. (2years)"),
-        "country": find("country"), "publisher": find("publisher"), "coverage": find("coverage"),
-        "categories": find("categories"), "areas": find("areas"),
-    }
-    if idx["key"] is None or idx["title"] is None:
-        raise ValueError("Not a SCImago journal-rank export (no Sourceid/Title columns)")
-
-    def cell(row, k):
-        i = idx[k]
-        return row[i].strip() if i is not None and i < len(row) else ""
-
-    rows = []
-    for row in reader:
-        key = cell(row, "key")
-        if not key:
-            continue
-        h = cell(row, "h")
-        q = cell(row, "q")
-        rows.append({
-            "key": key,
-            "title": cell(row, "title"),
-            "title_norm": normalise_title(cell(row, "title")),
-            "type": cell(row, "type") or None,
-            "issns": find_issns(cell(row, "issn")),
-            "sjr": _num(cell(row, "sjr")),
-            "sjr_quartile": q if q in ("Q1", "Q2", "Q3", "Q4") else None,
-            "sjr_year": year,
-            "h_index": int(h) if h.isdigit() else None,
-            "cites_doc_2y": _num(cell(row, "cites")),
-            "country": cell(row, "country") or None,
-            "publisher": cell(row, "publisher") or None,
-            "coverage": cell(row, "coverage") or None,
-            "categories": cell(row, "categories") or None,
-            "areas": cell(row, "areas") or None,
-        })
-    return rows, year
 
 
 # -------------------------------------------------------------------- CREST
@@ -191,8 +118,8 @@ def due(settings: dict, now: float | None = None) -> bool:
 
 
 def refresh(client, token: Callable[[], str], get_bytes: Callable[[str], bytes],
-            get_scimago: Callable[[], bytes], tmp_dir: Path) -> dict[str, str]:
-    """Download and upload all three lists. Returns {list: 'ok N rows' | 'failed: why'}."""
+            tmp_dir: Path) -> dict[str, str]:
+    """Download and upload both lists. Returns {list: 'ok N rows' | 'failed: why'}."""
     batch = hashlib.sha1(str(time.time()).encode()).hexdigest()[:10]
     results: dict[str, str] = {}
     tmp_dir.mkdir(parents=True, exist_ok=True)
@@ -206,8 +133,6 @@ def refresh(client, token: Callable[[], str], get_bytes: Callable[[str], bytes],
                                      "refreshed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}],
                       token(), on_conflict="user_id,key")
         results[name] = f"ok, {len(rows)} journals"
-
-    steps = []
 
     def do_sanlic():
         page = get_bytes(sanlic.PAGE).decode("utf-8", "replace")
@@ -224,11 +149,7 @@ def refresh(client, token: Callable[[], str], get_bytes: Callable[[str], bytes],
         path.write_bytes(get_bytes(url))
         load("crest", "ref_crest", parse_crest_xlsx(path), url.rsplit("/", 1)[-1], url)
 
-    def do_scimago():
-        rows, year = parse_scimago_csv(get_scimago())
-        load("scimago", "ref_scimago", rows, f"SJR {year}" if year else "latest", SCIMAGO_EXPORT)
-
-    steps = [("sanlic", do_sanlic), ("crest", do_crest), ("scimago", do_scimago)]
+    steps = [("sanlic", do_sanlic), ("crest", do_crest)]
     for name, fn in steps:
         try:
             fn()

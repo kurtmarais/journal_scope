@@ -4,21 +4,6 @@ from pathlib import Path
 
 from openpyxl import Workbook
 
-SCIMAGO_CSV = (
-    'Rank;Sourceid;Title;Type;Issn;SJR;SJR Best Quartile;H index;Total Docs. (2025);Total Docs. (3years);'
-    'Total Refs.;Total Citations (3years);Citable Docs. (3years);Cites / Doc. (2years);Ref. / Doc.;%Female;'
-    'Overton;SDG;Country;Region;Publisher;Coverage;Categories;Areas\n'
-    '1;23706;"Journal of Biomedical Informatics";journal;"15320464, 15320480";1,320;Q1;145;199;600;9000;4000;575;'
-    '6,551;45,2;38,27;1;20;United States;Northern America;"Academic Press Inc.";"2001-2026";'
-    '"Computer Science Applications (Q1); Health Informatics (Q1)";"Computer Science; Medicine"\n'
-    '2;21101030139;"JMIR Medical Informatics";journal;"22919694";0,950;Q2;60;300;800;9000;3000;700;'
-    '3,100;40,0;45,00;0;10;Canada;Northern America;"JMIR Publications Inc.";"2013-2026";'
-    '"Health Informatics (Q2)";"Medicine"\n'
-    '3;99999;"Journal of Biomedical Discontinued";journal;"12345679";;-;3;0;0;0;0;0;0;0;0;0;0;Spain;Western Europe;'
-    '"Old Press";"1990-2010";"Medicine (miscellaneous)";"Medicine"\n'
-).encode("utf-8")
-
-
 def crest_xlsx(path: Path) -> bytes:
     wb = Workbook()
     ws = wb.active

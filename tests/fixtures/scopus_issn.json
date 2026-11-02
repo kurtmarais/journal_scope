@@ -1,0 +1,42 @@
+{"serial-metadata-response": {
+  "link": [{"@_fa": "true", "@ref": "self", "@href": "https://api.elsevier.com/content/serial/title/issn/1532-0464?view=CITESCORE"}],
+  "entry": [{
+    "@_fa": "true",
+    "dc:title": "Journal of Biomedical Informatics",
+    "dc:publisher": "Academic Press Inc.",
+    "coverageStartYear": "2001",
+    "coverageEndYear": "2026",
+    "prism:aggregationType": "journal",
+    "source-id": "23706",
+    "prism:issn": "1532-0464",
+    "prism:eIssn": "1532-0480",
+    "subject-area": [
+      {"@_fa": "true", "@code": "1706", "@abbrev": "COMP", "$": "Computer Science Applications"},
+      {"@_fa": "true", "@code": "2718", "@abbrev": "MEDI", "$": "Health Informatics"}
+    ],
+    "SNIPList": {"SNIP": [{"@_fa": "true", "@year": "2025", "$": "1.602"}]},
+    "SJRList": {"SJR": [{"@_fa": "true", "@year": "2025", "$": "1.320"}]},
+    "citeScoreYearInfoList": {
+      "citeScoreCurrentMetric": "10.8",
+      "citeScoreCurrentMetricYear": "2025",
+      "citeScoreTracker": "9.6",
+      "citeScoreTrackerYear": "2026",
+      "citeScoreYearInfo": [
+        {"@_fa": "true", "@year": "2026", "@status": "In-Progress", "citeScoreInformationList": [{"@_fa": "true", "citeScoreInfo": [
+          {"@_fa": "true", "docType": "all", "scholarlyOutput": "650", "citationCount": "6240", "citeScore": "9.6", "percentCited": "80",
+           "citeScoreSubjectRank": [{"@_fa": "true", "subjectCode": "1706", "rank": "60", "percentile": "88"}]}]}]},
+        {"@_fa": "true", "@year": "2025", "@status": "Complete", "citeScoreInformationList": [{"@_fa": "true", "citeScoreInfo": [
+          {"@_fa": "true", "docType": "all", "scholarlyOutput": "700", "citationCount": "7560", "citeScore": "10.8", "percentCited": "85",
+           "citeScoreSubjectRank": [
+             {"@_fa": "true", "subjectCode": "1706", "rank": "40", "percentile": "95"},
+             {"@_fa": "true", "subjectCode": "2718", "rank": "19", "percentile": "82"}
+           ]}]}]}
+      ]
+    },
+    "link": [
+      {"@_fa": "true", "@ref": "scopus-source", "@href": "https://www.scopus.com/source/sourceInfo.url?sourceId=23706"},
+      {"@_fa": "true", "@ref": "homepage", "@href": "https://www.journals.elsevier.com/journal-of-biomedical-informatics"},
+      {"@_fa": "true", "@ref": "coverimage", "@href": "https://api.elsevier.com/content/serial/title/issn/15320464?view=coverimage"}
+    ]
+  }]
+}}

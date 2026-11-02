@@ -41,6 +41,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Journal Scope", lifespan=lifespan)
 app.state.db = None
 app.state.renderer = None        # the desktop app's Qt WebEngine renderer
+app.state.scopus_credentials = lambda: (None, None)   # (API key, institution token); desktop settings
 app.state.status = lambda: {}          # replaced by the desktop app (sync status)
 app.state.on_report = lambda uid: None  # replaced by the desktop app (trigger a sync)
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
@@ -50,7 +51,8 @@ app.mount("/web", StaticFiles(directory=WEB), name="web")
 async def run_lookup(q: str, sid: str | None = None, site: str | None = None) -> dict:
     if site and not site.startswith(("http://", "https://")):
         site = "https://" + site
-    return await build_report(app.state.fetcher, q, source_id=sid, site_url=site)
+    key, token = app.state.scopus_credentials()
+    return await build_report(app.state.fetcher, q, source_id=sid, site_url=site, scopus_key=key, scopus_token=token)
 
 
 @app.get("/")

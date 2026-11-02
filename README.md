@@ -4,7 +4,7 @@ Checks a journal's validity and credibility for publication by pulling, in one r
 
 | Source | What is taken from it |
 | --- | --- |
-| [SCImago](https://www.scimagojr.com/) | Existence and Scopus coverage, SJR and best quartile, quartile per category, H-index, citations per document (2 years), homepage link, similar journals |
+| [Scopus](https://www.scopus.com/sources) (Elsevier API) | Existence and coverage in Scopus, CiteScore with its rank, percentile and quartile in each subject (Q1 = 75th percentile and above), SJR, homepage link |
 | [CREST ZA Publications Monitor](https://db.crest.sun.ac.za/zapublications/) | DHET subsidy status (eligible / discontinued / delisted / ...) and the stated reason |
 | [Kanalregister](https://kanalregister.hkdir.no/en) | Norwegian Register level (2, 1, 0, X), level history, ceased flag, DOAJ indexing |
 | Journal website | Days to first decision / decision after review / acceptance / publication, acceptance rate, APC, impact factor as reported by the journal |
@@ -15,7 +15,7 @@ Values are copied as each source states them, with a link back (and, for the jou
 It comes in two parts, set up like Sidebar:
 
 1. **Desktop app (Windows, Python + PySide6).** A window with the search and your report history, plus a tray icon. Closing the window keeps it in the tray. It does all lookups.
-2. **Phone app (static web app on Cloudflare, added to the iPhone home screen).** Checks journals on its own from SCImago, CREST and SANLiC lists the PC loads into Supabase weekly, and can ask the PC for the full report (adds Kanalregister and the journal's own statistics). Sync goes through your own Supabase project; see [docs/phone-setup.md](docs/phone-setup.md).
+2. **Phone app (static web app on Cloudflare, added to the iPhone home screen).** Checks journals on its own: Scopus through a Supabase Edge Function, and CREST and SANLiC lists the PC loads into Supabase weekly, and can ask the PC for the full report (adds Kanalregister and the journal's own statistics). Sync goes through your own Supabase project; see [docs/phone-setup.md](docs/phone-setup.md).
 
 ## Install on Windows
 
@@ -37,26 +37,29 @@ py -m pip install --user -r requirements.txt
 pyw run_journal_scope.py
 ```
 
-Then open **⚙ Settings** (bottom left of the window), or right-click the tray icon (Windows may tuck it under the **^** by the clock; drag it onto the taskbar to keep it visible):
+Then open **⚙ Settings** (bottom left of the window) → **Scopus API key…** and paste a free key from [dev.elsevier.com](https://dev.elsevier.com/apikey/manage). CiteScore quartiles need your institution's access, which works automatically on the university network or VPN; elsewhere, ask the library for an institution token. Without a key the other sources still run.
+
+Also in ⚙ **Settings** (or the tray icon), or right-click the tray icon (Windows may tuck it under the **^** by the clock). Closing the window quits the app:
 - **Phone sync…** connects the phone app (see [docs/phone-setup.md](docs/phone-setup.md)).
 - **Add desktop shortcut** puts an icon on your real (OneDrive) Desktop.
 - **Start with Windows** keeps it in the tray from sign-in, so phone requests are handled.
 - **Update and restart** pulls the latest version. It also updates itself when you quit, as Sidebar does.
 
-Pages are loaded in the app's own embedded browser (Qt WebEngine), so nothing else needs installing. Some sites (SCImago, some publishers) occasionally show an "are you a person" check; when that happens a small window opens with the check for you to complete, and the lookup carries on. The site's cookie is kept, so it is rarely needed twice.
+Pages are loaded in the app's own embedded browser (Qt WebEngine), so nothing else needs installing. Some publisher sites occasionally show an "are you a person" check; when that happens a small window opens with the check for you to complete, and the lookup carries on. The site's cookie is kept, so it is rarely needed twice.
 
-Data lives in `%APPDATA%\JournalScope`: `journal_scope.db` (history), `settings.json`, `launch.log`, `error.log`, `update.log`, and `startup-crash.log` if it fails to start.
+Data lives in `%APPDATA%\JournalScope`: `journal_scope.db` (history), `settings.json`, `launch.log` (with start-up timings), `error.log`, `update.log`, and `startup-crash.log` if it fails to start. The very first launch after installing or updating is slower while Python compiles its files.
 
 ## How lookups work
 
-- SCImago, Kanalregister and publisher sites are loaded in the app's embedded browser (Kanalregister builds its pages in the browser; SCImago and many publishers refuse plain scripted requests). CREST and SANLiC are fetched directly. A lookup started from the phone while nobody is at the PC fails for a site that asks for a human check; the phone shows the error.
+- Scopus comes from Elsevier's Serial Title API (JSON, with your key). Kanalregister and publisher sites are loaded in the app's embedded browser (Kanalregister builds its pages in the browser; many publishers refuse plain scripted requests). CREST and SANLiC are fetched directly. A lookup started from the phone while nobody is at the PC fails for a site that asks for a human check; the phone shows the error.
 - SANLiC's "Journals covered by R&P agreements" spreadsheet is downloaded and cached for 7 days.
 - Publisher statistics are found by their labels. Known statistics pages are tried first for Elsevier (Journal Insights), Springer, MDPI, Taylor & Francis, Frontiers, BMC and Wiley; other publishers use the homepage only. If the homepage found is wrong, paste the journal's URL into "Journal website".
 
 ## Limitations
 
 - These are scraped pages, not APIs. When a site changes its layout, the matching module in `app/sources/` needs updating; the tests run against saved copies of each page and show which source broke.
-- SCImago does not publish the Clarivate Journal Impact Factor. Its "citations per document (2 years)" is the comparable figure; the JIF appears only if the journal's own site states it.
+- CiteScore is Scopus's metric, not the Clarivate Journal Impact Factor; the JIF appears only if the journal's own site states it.
+- Elsevier's free key allows 20,000 lookups a week, far more than needed.
 - CREST's search does not accept ISSNs, so it is searched by title and then matched on ISSN.
 - Kanalregister offers an official API on request (publiseringskanaler@hkdir.no), which would be faster and more stable than rendering the site.
 

@@ -24,12 +24,13 @@ def test_window_loads_ui(tmp_path):
     Database(tmp_path / "journal_scope.db").add_report(
         {"query": "q", "glance": [], "identity": {"title": "Saved Journal", "issns": ["1234-5678"]}, "sources": {}})
     desk = Desktop(app, tmp_path, start_hidden=False)
+    assert desk.win.isVisible()                    # shown before the server has loaded
     result = {}
 
     def check():
         desk.win.page.runJavaScript(
             "document.querySelector('#history b') && document.querySelector('#history b').textContent",
-            0, lambda v: result.setdefault("first", v))
+            0, lambda v: result.update(first=v) if v else None)
 
     loop = QEventLoop()
     timer = QTimer()
@@ -54,6 +55,8 @@ def test_window_loads_ui(tmp_path):
         assert result.get("first") == "Saved Journal"
         assert links == ["phone-sync"] and seen.get("settings") is True
         assert desk.sync.status == "Phone sync off"
+        assert "window shown after" in (tmp_path / "launch.log").read_text()
+        assert "ready after" in (tmp_path / "launch.log").read_text()
     finally:
         desk.sync.stop()
         desk.renderer.shutdown()

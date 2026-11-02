@@ -122,14 +122,14 @@ def test_phone_request_report_delete(tmp_path):
 
 
 def test_phone_searches_lists_without_pc(tmp_path):
-    from tests.reflist_samples import SCIMAGO_CSV, get_bytes_for
+    from tests.reflist_samples import get_bytes_for
 
     fake = FakeSupabase()
     api, api_url = fake.serve()
     web, web_url = serve_web(api_url)
     # The PC loads the lists once (then may be switched off).
     pc = SyncEngine(Database(tmp_path / "pc.db"), {}, lambda s: None, lambda *a: {}, opener=fake.opener,
-                    get_bytes=get_bytes_for(tmp_path), get_scimago=lambda: SCIMAGO_CSV, tmp_dir=tmp_path / "lists")
+                    get_bytes=get_bytes_for(tmp_path), tmp_dir=tmp_path / "lists")
     pc.sign_in(api_url, "sb_publishable_test", EMAIL, PASSWORD)
     assert all(v.startswith("ok") for v in pc.cycle()["lists"].values())
 
@@ -151,7 +151,7 @@ def test_phone_searches_lists_without_pc(tmp_path):
             await page.fill("input[name=q]", "1532-0480")
             await page.click("button:has-text('Check journal')")
             await page.wait_for_selector("h2:has-text('Journal of Biomedical Informatics')", timeout=10000)
-            for text in ("1.320 (Q1)", "Eligible for subsidy", "Covered (Hybrid)", "Coverage 2001-2026"):
+            for text in ("10.8 (Q1, 95th percentile)", "Eligible for subsidy", "Covered (Hybrid)", "Coverage 2001-2026"):
                 assert await page.is_visible(f"text={text}"), text
             assert await page.is_visible("article:has(h3:has-text('Kanalregister')) >> text=Not checked")
             if SHOTS:
@@ -163,23 +163,23 @@ def test_phone_searches_lists_without_pc(tmp_path):
             await page.click("button:has-text('Get full report from my PC')")
             await page.wait_for_selector("text=Waiting for your PC")
             req = next(iter(fake.tables["journal_requests"].values()))
-            assert req["sid"] == "23706"
+            assert req["sid"] == "1532-0464"
 
             # Title search with several matches -> choose
             await page.click("text=‹ Back")
             await page.fill("input[name=q]", "Journal of Biomedical")
             await page.click("button:has-text('Check journal')")
             await page.wait_for_selector("text=Several journals match")
-            await page.click(".candidates button:has-text('Journal of Biomedical Discontinued')")
-            await page.wait_for_selector("h2:has-text('Journal of Biomedical Discontinued')")
-            assert await page.is_visible("text=Not on approved list")
+            await page.click(".candidates button:has-text('Journal of Biomedical Informatics: X')")
+            await page.wait_for_selector("text=Not in Scopus")
+            assert await page.is_visible(".tile.bad:has-text('Discontinued')")     # CREST list status
             assert await page.is_visible("text=Not covered")
 
             # Unknown journal
             await page.click("text=‹ Back")
             await page.fill("input[name=q]", "0000-0019")
             await page.click("button:has-text('Check journal')")
-            await page.wait_for_selector("text=Not in SCImago's journal list")
+            await page.wait_for_selector("text=Not in Scopus")
 
             assert not errors, errors
             await browser.close()

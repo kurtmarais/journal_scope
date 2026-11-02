@@ -18,7 +18,7 @@ from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 EMAIL, PASSWORD = "me@example.org", "correct horse"
-TABLES = ("journal_reports", "journal_requests", "ref_scimago", "ref_crest", "ref_sanlic", "ref_lists")
+TABLES = ("journal_reports", "journal_requests", "ref_crest", "ref_sanlic", "ref_lists")
 DEFAULTS = {
     "journal_reports": {"query": "", "title": "", "issns": [], "report": {}, "deleted": False},
     "journal_requests": {"query": "", "sid": None, "site": None, "status": "pending", "report_uid": None,
@@ -79,6 +79,10 @@ class FakeSupabase:
                     self.refresh.discard(data["refresh_token"])
                     return 200, self._session()
                 return 400, {"error_description": "Invalid Refresh Token"}
+            if parts.path == "/functions/v1/scopus":
+                if h.get("authorization", "").removeprefix("Bearer ") not in self.access:
+                    return 401, {"message": "Invalid JWT"}
+                return self.scopus(q)
             if not parts.path.startswith("/rest/v1/"):
                 return 404, {"message": "not found"}
             table = parts.path.rsplit("/", 1)[-1]
@@ -114,6 +118,19 @@ class FakeSupabase:
                     del self.tables[table][k]
                 return 204, None
         return 405, {"message": "method not allowed"}
+
+    def scopus(self, q: dict) -> tuple[int, object]:
+        """Stand-in for the 'scopus' Edge Function (returns Elsevier-shaped JSON)."""
+        from pathlib import Path
+        fix = Path(__file__).parent / "fixtures"
+        if q.get("issn") in ("1532-0464", "1532-0480"):
+            return 200, json.loads((fix / "scopus_issn.json").read_text())
+        if q.get("title"):
+            data = json.loads((fix / "scopus_search.json").read_text())
+            words = q["title"].lower()
+            entries = [e for e in data["serial-metadata-response"]["entry"] if words in e["dc:title"].lower()]
+            return 200, {"serial-metadata-response": {"entry": entries}}
+        return 200, {"serial-metadata-response": {"entry": []}}
 
     @staticmethod
     def _split(text: str) -> list[str]:

@@ -26,7 +26,7 @@ from pathlib import Path
 
 from app.storage import Database
 
-from . import reflists, winplatform
+from . import winplatform
 
 PAGE = 1000
 TIMEOUT = 30
@@ -162,11 +162,9 @@ class SyncEngine:
     def __init__(self, db: Database, settings: dict, save_settings: Callable[[dict], None],
                  lookup: Lookup, opener: Opener | None = None,
                  get_bytes: Callable[[str], bytes] | None = None,
-                 get_scimago: Callable[[], bytes] | None = None,
                  tmp_dir: Path | None = None):
         self.db = db
         self.get_bytes = get_bytes
-        self.get_scimago = get_scimago
         self.tmp_dir = tmp_dir
         self.force_lists = False
         self.settings = settings
@@ -253,16 +251,17 @@ class SyncEngine:
             looked_up += 1
 
         lists = None
-        if self.get_bytes and self.get_scimago and (self.force_lists or reflists.due(self.settings)):
+        from . import reflists   # imported on first use: keeps start-up fast
+        if self.get_bytes and (self.force_lists or reflists.due(self.settings)):
             lists = self.refresh_lists(client)
         return {"uploaded": uploaded, "downloaded": downloaded, "looked_up": looked_up, "lists": lists}
 
     def refresh_lists(self, client: SupabaseClient | None = None) -> dict[str, str]:
         """Reload the reference lists the phone searches (about weekly)."""
+        from . import reflists
         self.force_lists = False
         self.settings["ref_tried_at"] = time.time()
-        results = reflists.refresh(client or self.client(), self._token, self.get_bytes, self.get_scimago,
-                                   self.tmp_dir or Path("."))
+        results = reflists.refresh(client or self.client(), self._token, self.get_bytes, self.tmp_dir or Path("."))
         if all(v.startswith("ok") for v in results.values()):
             self.settings["ref_refreshed_at"] = time.time()
         self.settings["ref_results"] = results

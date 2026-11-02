@@ -92,6 +92,35 @@ function scimagoCard(r) {
   return card("SCImago", "Existence and indexing, SJR / quartile, H-index, citations per document, related journals.", r, body, { site: "SCImago", wide: true });
 }
 
+function scopusCard(r) {
+  const d = r.data || {};
+  const body = [];
+  if (r.status === "found") {
+    const cs = d.citescore;
+    const pct = d.best_percentile != null ? `, best: ${Math.round(d.best_percentile)}th percentile` : "";
+    body.push(kv([
+      ["CiteScore", cs && cs.value != null ? [String(cs.value), " ", d.best_quartile && tag(d.best_quartile, quartileTone(d.best_quartile)),
+        h("span", { class: "ctx" }, ` (${cs.year || ""}${pct})`)] : ""],
+      ["CiteScore Tracker", d.citescore_tracker && d.citescore_tracker.value != null ? `${d.citescore_tracker.value} (${d.citescore_tracker.year}, in progress)` : ""],
+      ["SJR", d.sjr ? `${d.sjr.value} (${d.sjr.year})` : ""],
+      ["Coverage", d.coverage],
+      ["ISSN", (d.issns || []).join(", ")],
+      ["Publisher", d.publisher],
+      ["Type", d.type],
+      ["Links", join([d.homepage && link(d.homepage, "Journal homepage"), d.scopus_url && link(d.scopus_url, "Scopus source page")])],
+    ]));
+    if ((d.subject_ranks || []).length) {
+      body.push(h("table", {},
+        h("thead", {}, h("tr", {}, h("th", {}, "Subject"), h("th", {}, "Rank"), h("th", {}, "Percentile"), h("th", {}, "Quartile"))),
+        h("tbody", {}, d.subject_ranks.map((x) => h("tr", {}, h("td", {}, x.subject), h("td", {}, String(x.rank ?? "")),
+          h("td", {}, x.percentile != null ? `${Math.round(x.percentile)}th` : ""), h("td", {}, x.quartile ? tag(x.quartile, quartileTone(x.quartile)) : ""))))));
+    } else if (d.ranks_unavailable) {
+      body.push(h("p", { class: "note" }, "Subject ranks and quartiles were not available for this lookup."));
+    }
+  }
+  return card("Scopus", "Existence and indexing, CiteScore and its quartile in each subject (Q1 = 75th percentile and above), SJR.", r, body, { site: "Scopus", wide: true });
+}
+
 function crestCard(r) {
   const d = r.data || {};
   let body = null;
@@ -200,7 +229,7 @@ export function renderReport(report) {
     h("div", { class: "identity" }, h("h2", {}, id.title || report.query), h("div", { class: "meta" }, meta)),
     glanceTiles(report.glance),
     h("div", { class: "cards" },
-      scimagoCard(s.scimago), crestCard(s.crest), kanalCard(s.kanalregister), sanlicCard(s.sanlic), siteCard(s.journal_site)));
+      s.scopus ? scopusCard(s.scopus) : s.scimago ? scimagoCard(s.scimago) : null, crestCard(s.crest), kanalCard(s.kanalregister), sanlicCard(s.sanlic), siteCard(s.journal_site)));
 }
 
 export function renderCandidates(query, candidates, onPick) {
@@ -214,9 +243,9 @@ export function renderCandidates(query, candidates, onPick) {
 
 
 // ------------------------------------------------------------- phone lists
-// The phone searches reference lists the PC loads into Supabase (SCImago export,
-// CREST DHET list, SANLiC title list) and builds a report in the same shape as
-// the PC's, so renderReport() shows it.
+// The phone gets Scopus data through a Supabase Edge Function (it holds the
+// Elsevier API key) and searches the CREST and SANLiC lists the PC loads into
+// Supabase, then builds a report in the same shape as the PC's.
 
 export function normaliseTitle(v) {
   if (!v) return "";
@@ -241,27 +270,69 @@ const SANLIC_PAGES = {
 
 const loadedNote = (meta) => meta ? `From the ${meta.version || "current"} list, loaded ${new Date(meta.refreshed_at).toLocaleDateString()}.` : null;
 
-function scimagoSource(r, meta) {
-  if (!r) return { status: "not_found", url: "https://www.scimagojr.com/", data: {},
-    note: "Not in SCImago's journal list, so not (or no longer) indexed in Scopus." };
-  const years = (r.coverage || "").match(/\b(19|20)\d{2}\b/g) || [];
-  const cats = (r.categories || "").split(";").map((c) => c.trim()).filter(Boolean).map((c) => {
-    const m = /^(.*?)\s*\((Q[1-4])\)$/.exec(c);
-    return { category: m ? m[1] : c, year: r.sjr_year, quartile: m ? m[2] : "-" };
-  });
+// --- Scopus (Elsevier Serial Title API), same parsing as app/sources/scopus.py
+const asList = (v) => (v == null ? [] : Array.isArray(v) ? v : [v]);
+const num = (v) => (v == null || v === "" || isNaN(Number(v)) ? null : Number(v));
+export const scopusQuartile = (p) => (p == null ? null : p >= 75 ? "Q1" : p >= 50 ? "Q2" : p >= 25 ? "Q3" : "Q4");
+
+export function scopusEntries(payload) {
+  const resp = (payload && payload["serial-metadata-response"]) || {};
+  return asList(resp.entry).filter((e) => e && !e.error && (e["dc:title"] || e["source-id"]));
+}
+
+function issnsOf(e) {
+  return [e["prism:issn"], e["prism:eIssn"]].map(normaliseIssn).filter(Boolean)
+    .filter((v, i, a) => a.indexOf(v) === i);
+}
+
+export function scopusCandidates(items) {
+  return items.map((e) => ({ source_id: issnsOf(e)[0], title: e["dc:title"] || "", publisher: e["dc:publisher"] || null, country: null }))
+    .filter((c) => c.source_id);
+}
+
+export function parseScopusEntry(e, limited = false) {
+  const subjects = Object.fromEntries(asList(e["subject-area"]).filter((x) => x["@code"]).map((x) => [String(x["@code"]), x.$]));
+  const links = Object.fromEntries(asList(e.link).map((l) => [l["@ref"], l["@href"]]));
+  const cs = e.citeScoreYearInfoList || {};
+  let citescore = cs.citeScoreCurrentMetric != null ? { year: num(cs.citeScoreCurrentMetricYear), value: num(cs.citeScoreCurrentMetric) } : null;
+  const tracker = cs.citeScoreTracker != null ? { year: num(cs.citeScoreTrackerYear), value: num(cs.citeScoreTracker) } : null;
+  const ranks = [];
+  const complete = asList(cs.citeScoreYearInfo).filter((y) => (y["@status"] || "").toLowerCase() === "complete")
+    .sort((a, b) => num(b["@year"]) - num(a["@year"]));
+  if (complete.length) {
+    const year = num(complete[0]["@year"]);
+    for (const il of asList(complete[0].citeScoreInformationList)) {
+      for (const info of asList(il.citeScoreInfo)) {
+        if ((info.docType || "all") !== "all") continue;
+        if (!citescore || citescore.year === year) citescore = { year, value: num(info.citeScore) };
+        for (const r of asList(info.citeScoreSubjectRank)) {
+          const p = num(r.percentile);
+          ranks.push({ subject: subjects[String(r.subjectCode)] || String(r.subjectCode), code: String(r.subjectCode), year,
+            rank: r.rank, percentile: p, quartile: scopusQuartile(p) });
+        }
+      }
+    }
+  }
+  ranks.sort((a, b) => (b.percentile || 0) - (a.percentile || 0));
+  const sjr = asList((e.SJRList || {}).SJR).map((x) => ({ year: num(x["@year"]), value: num(x.$) }))
+    .filter((x) => x.year && x.value != null).sort((a, b) => b.year - a.year)[0] || null;
+  const start = e.coverageStartYear, end = e.coverageEndYear;
   return {
-    status: "found",
-    url: `https://www.scimagojr.com/journalsearch.php?q=${encodeURIComponent(r.key)}&tip=sid&clean=0`,
-    note: (loadedNote(meta) || "") + " Homepage and similar journals are on SCImago's page.",
-    data: {
-      title: r.title, country: r.country, publisher: r.publisher, issns: r.issns || [], publication_type: r.type,
-      sjr: r.sjr_year ? { year: r.sjr_year, value: r.sjr, best_quartile: r.sjr_quartile } : null,
-      h_index: r.h_index, coverage: r.coverage, coverage_last_year: years.length ? Math.max(...years.map(Number)) : null,
-      cites_per_doc_2y: r.cites_doc_2y != null ? [{ year: r.sjr_year, value: r.cites_doc_2y }] : [],
-      category_quartiles: cats,
-      subject_areas: (r.areas || "").split(";").map((a) => a.trim()).filter(Boolean).map((a) => ({ area: a, categories: [] })),
-    },
+    title: e["dc:title"] || "", publisher: e["dc:publisher"] || null, source_id: e["source-id"] ? String(e["source-id"]) : null,
+    type: e["prism:aggregationType"] || null, issns: issnsOf(e), subjects: Object.values(subjects),
+    citescore, citescore_tracker: tracker, subject_ranks: ranks,
+    best_quartile: ranks.length ? ranks[0].quartile : null, best_percentile: ranks.length ? ranks[0].percentile : null,
+    sjr, coverage: start && end ? `${start}-${end}` : null, coverage_last_year: num(end),
+    homepage: links.homepage || null, scopus_url: links["scopus-source"] || null,
+    ranks_unavailable: limited || (citescore != null && !ranks.length),
   };
+}
+
+function scopusSource(d, note, error) {
+  const url = (d && d.scopus_url) || "https://www.scopus.com/sources";
+  if (error) return { status: "error", url, data: {}, error };
+  if (!d) return { status: "not_found", url, data: {}, note: "Not in Scopus, so the journal is not (or no longer) indexed there." };
+  return { status: "found", url, data: d, note };
 }
 
 function crestSource(r, meta, title) {
@@ -284,12 +355,12 @@ function sanlicSource(r, meta) {
     agreement_page: page ? `https://sanlic.ac.za/${page}/` : null, title_list: meta && meta.source_url } };
 }
 
-export function quickReport(query, { scimago, crest, sanlic, lists, issns, title }) {
+export function quickReport(query, { scopus, scopusNote, scopusError, crest, sanlic, lists, issns, title }) {
   const meta = Object.fromEntries((lists || []).map((l) => [l.key, l]));
-  const sj = scimagoSource(scimago, meta.scimago);
+  const sj = scopusSource(scopus, scopusNote, scopusError);
   const kanalTerm = (issns || [])[0] || title || query;
   const sources = {
-    scimago: sj,
+    scopus: sj,
     crest: crestSource(crest, meta.crest, title),
     sanlic: sanlicSource(sanlic, meta.sanlic),
     kanalregister: { status: "skipped", data: {},
@@ -301,14 +372,17 @@ export function quickReport(query, { scimago, crest, sanlic, lists, issns, title
   const glance = [];
   if (sj.status === "found") {
     const d = sj.data;
-    glance.push({ label: "Indexed (Scopus via SCImago)", value: d.coverage ? `Coverage ${d.coverage}` : "Listed",
-      tone: d.coverage_last_year >= new Date().getFullYear() - 1 ? "good" : "warn", source: "scimago" });
-    if (d.sjr) glance.push({ label: `SJR ${d.sjr.year}`, value: d.sjr.value != null ? `${d.sjr.value.toFixed(3)}${d.sjr.best_quartile ? ` (${d.sjr.best_quartile})` : ""}` : (d.sjr.best_quartile || "-"),
-      tone: { Q1: "good", Q2: "good", Q3: "warn", Q4: "bad" }[d.sjr.best_quartile] || "neutral", source: "scimago" });
-    if (d.cites_per_doc_2y.length) glance.push({ label: `Cites/doc, 2 years (${d.cites_per_doc_2y[0].year})`, value: d.cites_per_doc_2y[0].value.toFixed(2), tone: "neutral", source: "scimago" });
-    if (d.h_index != null) glance.push({ label: "H-index", value: String(d.h_index), tone: "neutral", source: "scimago" });
-  } else {
-    glance.push({ label: "Indexed (Scopus via SCImago)", value: "Not found", tone: "bad", source: "scimago" });
+    const last = d.coverage_last_year || (d.citescore && d.citescore.year);
+    glance.push({ label: "Indexed in Scopus", value: d.coverage ? `Coverage ${d.coverage}` : "Listed",
+      tone: last >= new Date().getFullYear() - 2 ? "good" : "warn", source: "scopus" });
+    if (d.citescore && d.citescore.value != null) {
+      const extra = d.best_quartile && d.best_percentile != null ? ` (${d.best_quartile}, ${Math.round(d.best_percentile)}th percentile)` : "";
+      glance.push({ label: d.citescore.year ? `CiteScore ${d.citescore.year}` : "CiteScore", value: `${d.citescore.value.toFixed(1)}${extra}`,
+        tone: { Q1: "good", Q2: "good", Q3: "warn", Q4: "bad" }[d.best_quartile] || "neutral", source: "scopus" });
+    }
+    if (d.sjr) glance.push({ label: `SJR ${d.sjr.year}`, value: d.sjr.value.toFixed(3), tone: "neutral", source: "scopus" });
+  } else if (sj.status === "not_found") {
+    glance.push({ label: "Indexed in Scopus", value: "Not found", tone: "bad", source: "scopus" });
   }
   const c = sources.crest;
   glance.push(c.status === "found" ? { label: "DHET subsidy", value: c.data.status, tone: c.data.eligible ? "good" : "bad", source: "crest" }

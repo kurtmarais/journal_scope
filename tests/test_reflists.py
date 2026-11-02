@@ -6,23 +6,7 @@ from app.storage import Database
 from desktop import reflists
 from desktop.sync import SyncEngine
 from tests.fake_supabase import EMAIL, PASSWORD, FakeSupabase
-from tests.reflist_samples import SCIMAGO_CSV, crest_xlsx, get_bytes_for, sanlic_xlsx
-
-
-def test_parse_scimago_export():
-    rows, year = reflists.parse_scimago_csv(SCIMAGO_CSV)
-    assert year == 2025 and len(rows) == 3
-    jbi = rows[0]
-    assert jbi["key"] == "23706" and jbi["issns"] == ["1532-0464", "1532-0480"]
-    assert jbi["sjr"] == 1.32 and jbi["sjr_quartile"] == "Q1" and jbi["h_index"] == 145 and jbi["cites_doc_2y"] == 6.551
-    assert jbi["title_norm"] == "journal of biomedical informatics"
-    assert jbi["categories"].startswith("Computer Science Applications (Q1)")
-    assert rows[2]["sjr"] is None and rows[2]["sjr_quartile"] is None
-
-
-def test_parse_scimago_rejects_html():
-    with pytest.raises(ValueError):
-        reflists.parse_scimago_csv(b"<html>Just a moment...</html>")
+from tests.reflist_samples import crest_xlsx, get_bytes_for, sanlic_xlsx
 
 
 def test_parse_crest_and_sanlic(tmp_path):
@@ -49,23 +33,23 @@ def test_due():
     assert reflists.due({"ref_refreshed_at": now - 8 * 86400, "ref_tried_at": now - 3600}) is False
 
 
-def _engine(tmp_path, fake, get_scimago=lambda: SCIMAGO_CSV):
+def _engine(tmp_path, fake, get_bytes=None):
     eng = SyncEngine(Database(tmp_path / "d.db"), {}, lambda s: None, lambda *a: {}, opener=fake.opener,
-                     get_bytes=get_bytes_for(tmp_path), get_scimago=get_scimago, tmp_dir=tmp_path / "lists")
+                     get_bytes=get_bytes or get_bytes_for(tmp_path), tmp_dir=tmp_path / "lists")
     eng.sign_in("https://x.supabase.co", "k", EMAIL, PASSWORD)
     return eng
 
 
 def test_cycle_loads_lists_and_replaces_old_rows(tmp_path):
     fake = FakeSupabase()
-    fake.tables["ref_scimago"]["stale"] = {"key": "stale", "batch": "old"}
+    fake.tables["ref_crest"]["stale"] = {"key": "stale", "batch": "old"}
     eng = _engine(tmp_path, fake)
     result = eng.cycle()
     assert all(v.startswith("ok") for v in result["lists"].values()), result
-    assert set(fake.tables["ref_scimago"]) == {"23706", "21101030139", "99999"}
+    assert set(fake.tables["ref_crest"]) == {"JNL_014249", "JNL_024590"}      # stale row removed
     assert fake.tables["ref_crest"]["JNL_014249"]["status"] == "Eligible for subsidy"
     assert len(fake.tables["ref_sanlic"]) == 2
-    assert fake.tables["ref_lists"]["scimago"]["version"] == "SJR 2025" and fake.tables["ref_lists"]["crest"]["rows"] == 2
+    assert fake.tables["ref_lists"]["crest"]["rows"] == 2 and fake.tables["ref_lists"]["sanlic"]["rows"] == 2
     assert eng.settings["ref_refreshed_at"] > 0
     assert eng.cycle()["lists"] is None          # not due again for a week
 
@@ -73,11 +57,15 @@ def test_cycle_loads_lists_and_replaces_old_rows(tmp_path):
 def test_one_list_failing_keeps_the_others(tmp_path):
     fake = FakeSupabase()
 
-    def blocked():
-        raise RuntimeError("SCImago asked for a human check")
+    good = get_bytes_for(tmp_path)
 
-    eng = _engine(tmp_path, fake, get_scimago=blocked)
+    def flaky(url):
+        if "crest" in url:
+            raise OSError("CREST unreachable")
+        return good(url)
+
+    eng = _engine(tmp_path, fake, get_bytes=flaky)
     lists = eng.cycle()["lists"]
-    assert lists["scimago"].startswith("failed") and lists["crest"].startswith("ok") and lists["sanlic"].startswith("ok")
+    assert lists["crest"].startswith("failed") and lists["sanlic"].startswith("ok")
     assert "ref_refreshed_at" not in eng.settings      # retried tomorrow
-    assert fake.tables["ref_crest"]
+    assert fake.tables["ref_sanlic"]

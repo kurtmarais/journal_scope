@@ -2,7 +2,7 @@
 // Reads reports your PC has produced (synced through your Supabase project) and
 // queues new lookups, which the PC runs the next time it syncs.
 import { SUPABASE_KEY, SUPABASE_URL } from "./config.js";
-import { h, normaliseIssn, normaliseTitle, quickReport, renderCandidates, renderReport } from "./report-view.js";
+import { h, normaliseIssn, normaliseTitle, parseScopusEntry, quickReport, renderCandidates, renderReport, scopusCandidates, scopusEntries } from "./report-view.js";
 import { AuthError, Supabase, SyncError } from "./supabase.js";
 
 const root = document.getElementById("root");
@@ -133,47 +133,54 @@ async function deleteReport(id) {
 
 // ---------------------------------------------------------- phone search
 // Searches the lists the PC loads into Supabase. Runs entirely from the phone.
+async function scopusLookup(api, t, params) {
+  // Edge Function "scopus" calls Elsevier's Serial Title API with the key stored in Supabase.
+  return api.request("GET", "/functions/v1/scopus", { token: t, params });
+}
+
 async function quickSearch(query, site, sourceId = null) {
   state.view = { name: "quick", query, site, loading: true };
   render();
   try {
     const t = await token();
     const api = sb();
-    const issn = normaliseIssn(query);
+    const issn = sourceId || normaliseIssn(query);
     const lists = await api.select("ref_lists", {}, t);
-    let sj = null;
-    if (sourceId) {
-      sj = (await api.select("ref_scimago", { key: `eq.${sourceId}` }, t))[0] || null;
-    } else if (issn) {
-      sj = (await api.select("ref_scimago", { issns: `cs.{${issn}}`, limit: "1" }, t))[0] || null;
-    } else {
-      const norm = normaliseTitle(query);
-      const exact = await api.select("ref_scimago", { title_norm: `eq.${norm}`, limit: "5" }, t);
-      if (exact.length === 1) sj = exact[0];
-      else {
-        const like = exact.length ? exact : await api.select("ref_scimago",
-          { title_norm: `ilike.*${norm.replace(/[*,()]/g, " ")}*`, order: "sjr.desc.nullslast", limit: "15" }, t);
-        if (like.length === 1) sj = like[0];
-        else if (like.length > 1) {
-          state.view = { name: "quick", query, site, candidates: like.map((r) => ({ source_id: r.key, title: r.title, country: r.country, publisher: r.publisher })) };
+    let scopus = null, scopusNote = null, scopusError = null;
+    try {
+      if (issn) {
+        const payload = await scopusLookup(api, t, { issn });
+        const entry = scopusEntries(payload)[0];
+        scopus = entry ? parseScopusEntry(entry, !!payload._limited) : null;
+        if (payload._limited) scopusNote = "CiteScore subject ranks need institutional access, which this lookup did not have.";
+      } else {
+        const found = scopusCandidates(scopusEntries(await scopusLookup(api, t, { title: query })));
+        const exact = found.filter((c) => normaliseTitle(c.title) === normaliseTitle(query));
+        const pick = found.length === 1 ? found[0] : exact.length === 1 ? exact[0] : null;
+        if (!pick && found.length > 1) {
+          state.view = { name: "quick", query, site, candidates: found };
           render();
           return;
         }
+        if (pick) return quickSearch(query, site, pick.source_id);
       }
+    } catch (e) {
+      scopusError = /404|not found/i.test(e.message)
+        ? "The Scopus lookup isn't set up yet: deploy the 'scopus' Edge Function (docs/phone-setup.md)."
+        : "Scopus lookup failed: " + e.message;
     }
-    const issns = sj ? sj.issns : issn ? [issn] : [];
-    const title = sj ? sj.title : issn ? null : query;
-    const set = `{${issns.join(",")}}`;
+    const issns = scopus ? scopus.issns : issn ? [issn] : [];
+    const title = scopus ? scopus.title : issn ? null : query;
     const inList = `(${issns.join(",")})`;
     const [crestRows, sanlicRows] = await Promise.all([
       issns.length ? api.select("ref_crest", { or: `(issn.in.${inList},eissn.in.${inList})`, limit: "1" }, t) : Promise.resolve([]),
-      issns.length ? api.select("ref_sanlic", { issns: `ov.${set}`, limit: "1" }, t) : Promise.resolve([]),
+      issns.length ? api.select("ref_sanlic", { issns: `ov.{${issns.join(",")}}`, limit: "1" }, t) : Promise.resolve([]),
     ]);
     const norm = normaliseTitle(title);
     const crest = crestRows[0] || (norm ? (await api.select("ref_crest", { title_norm: `eq.${norm}`, limit: "1" }, t))[0] : null) || null;
     const sanlic = sanlicRows[0] || (norm ? (await api.select("ref_sanlic", { title_norm: `eq.${norm}`, limit: "1" }, t))[0] : null) || null;
-    const report = quickReport(query, { scimago: sj, crest, sanlic, lists, issns, title });
-    state.view = { name: "quick", query, site, report, sid: sj ? sj.key : null, listsLoaded: lists.length > 0 };
+    const report = quickReport(query, { scopus, scopusNote, scopusError, crest, sanlic, lists, issns, title });
+    state.view = { name: "quick", query, site, report, sid: issns[0] || null, listsLoaded: lists.length > 0 };
   } catch (e) {
     state.view = { name: "quick", query, site, error: e.message };
   }
@@ -225,8 +232,9 @@ function signInScreen() {
 const TONES = { good: "good", warn: "warn", bad: "bad" };
 function miniChips(glance) {
   const pick = ["DHET subsidy", "Norwegian Register", "SANLiC APC agreement"];
-  const items = (glance || []).filter((g) => pick.includes(g.label) || g.label.startsWith("SJR"));
+  const items = (glance || []).filter((g) => pick.includes(g.label) || g.label.startsWith("CiteScore"));
   return h("div", { class: "mini" }, items.map((g) => h("span", { class: `tag ${TONES[g.tone] || "neutral"}` },
+    g.label.startsWith("CiteScore") ? "CiteScore " + g.value.replace(/^([\d.]+)(?: \((Q\d).*)?$/, (m, v, q) => q ? `${v} ${q}` : v) :
     g.label.startsWith("SJR") ? g.value.replace(/^.*\((Q\d)\).*$/, "$1") : g.label === "DHET subsidy" ? `DHET: ${g.value}` : g.value)));
 }
 
@@ -314,7 +322,7 @@ function quickScreen(v) {
         `Open full report (${dateFmt(full.created_at)})`),
       h("button", { class: "secondary", onclick: () => requestLookup(v.query, v.site, v.sid) },
         full ? "Refresh full report on my PC" : "Get full report from my PC")),
-    h("p", { class: "note" }, "Instant check from the SCImago, CREST and SANLiC lists. The full report adds Kanalregister and the journal's own statistics; your PC runs it when it is on."),
+    h("p", { class: "note" }, "Instant check from Scopus and the CREST and SANLiC lists. The full report adds Kanalregister and the journal's own statistics; your PC runs it when it is on."),
     renderReport(v.report));
 }
 

@@ -71,28 +71,21 @@ def launcher() -> Path:
     return Path(__file__).resolve().parent.parent / "run_journal_scope.py"
 
 
-def _folder(name: str) -> Path | None:
-    """A Windows shell folder ("Desktop", "Startup"), following OneDrive redirection."""
+def startup_shortcut() -> Path | None:
+    """The per-user Startup folder (fixed location; no PowerShell, so it is instant)."""
     if not IS_WINDOWS:
         return None
-    try:
-        out = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command",
-                              f"[Environment]::GetFolderPath('{name}')"],
-                             capture_output=True, text=True, timeout=20, creationflags=_NO_WINDOW)
-        path = out.stdout.strip()
-        return Path(path) if path else None
-    except (OSError, subprocess.SubprocessError):
-        return None
-
-
-def startup_shortcut() -> Path | None:
-    folder = _folder("Startup")
-    return folder / "Journal Scope.lnk" if folder else None
+    base = os.environ.get("APPDATA")
+    return Path(base) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup" / "Journal Scope.lnk" if base else None
 
 
 def desktop_shortcut() -> Path | None:
-    folder = _folder("Desktop")
-    return folder / "Journal Scope.lnk" if folder else None
+    """The visible Desktop, following OneDrive redirection (Qt asks Windows for the known folder)."""
+    if not IS_WINDOWS:
+        return None
+    from PySide6.QtCore import QStandardPaths
+    path = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.DesktopLocation)
+    return Path(path) / "Journal Scope.lnk" if path else None
 
 
 def create_shortcut(lnk: Path, args: str = "") -> None:

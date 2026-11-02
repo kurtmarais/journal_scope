@@ -1,32 +1,13 @@
 -- Journal Scope: reference lists the phone searches directly, so phone lookups
 -- don't need the PC to be on. The desktop app reloads them about weekly from:
---   ref_scimago : SCImago's journal-rank export (SJR, quartiles, H-index, cites/doc)
 --   ref_crest   : CREST's DHET-approved journal master list (subsidy status)
 --   ref_sanlic  : SANLiC's R&P agreement title list (APC coverage)
 --   ref_lists   : when each list was loaded and from which file
 -- Rows belong to the signed-in user (row-level security), like the other tables.
 -- Run in the journal_scope Supabase project, after 20261103090000_journal_scope.sql.
 
-create table if not exists public.ref_scimago (
-    user_id      uuid not null default auth.uid() references auth.users (id) on delete cascade,
-    key          text not null,                -- SCImago source id
-    title        text not null default '',
-    title_norm   text not null default '',
-    type         text,
-    issns        text[] not null default '{}',
-    sjr          double precision,
-    sjr_quartile text,
-    sjr_year     integer,
-    h_index      integer,
-    cites_doc_2y double precision,
-    country      text,
-    publisher    text,
-    coverage     text,
-    categories   text,
-    areas        text,
-    batch        text not null default '',
-    primary key (user_id, key)
-);
+-- Scopus data comes from the 'scopus' Edge Function; an earlier SCImago list table is removed.
+drop table if exists public.ref_scimago;
 
 create table if not exists public.ref_crest (
     user_id     uuid not null default auth.uid() references auth.users (id) on delete cascade,
@@ -60,7 +41,7 @@ create table if not exists public.ref_sanlic (
 
 create table if not exists public.ref_lists (
     user_id      uuid not null default auth.uid() references auth.users (id) on delete cascade,
-    key          text not null,                -- 'scimago' | 'crest' | 'sanlic'
+    key          text not null,                -- 'crest' | 'sanlic'
     version      text,
     source_url   text,
     rows         integer not null default 0,
@@ -68,22 +49,16 @@ create table if not exists public.ref_lists (
     primary key (user_id, key)
 );
 
-create index if not exists ref_scimago_issns on public.ref_scimago using gin (issns);
-create index if not exists ref_scimago_title on public.ref_scimago (user_id, title_norm);
 create index if not exists ref_crest_issn on public.ref_crest (user_id, issn);
 create index if not exists ref_crest_eissn on public.ref_crest (user_id, eissn);
 create index if not exists ref_crest_title on public.ref_crest (user_id, title_norm);
 create index if not exists ref_sanlic_issns on public.ref_sanlic using gin (issns);
 create index if not exists ref_sanlic_title on public.ref_sanlic (user_id, title_norm);
 
-alter table public.ref_scimago enable row level security;
 alter table public.ref_crest enable row level security;
 alter table public.ref_sanlic enable row level security;
 alter table public.ref_lists enable row level security;
 
-drop policy if exists "own ref_scimago" on public.ref_scimago;
-create policy "own ref_scimago" on public.ref_scimago for all to authenticated
-    using ((select auth.uid()) = user_id) with check ((select auth.uid()) = user_id);
 drop policy if exists "own ref_crest" on public.ref_crest;
 create policy "own ref_crest" on public.ref_crest for all to authenticated
     using ((select auth.uid()) = user_id) with check ((select auth.uid()) = user_id);
@@ -94,5 +69,5 @@ drop policy if exists "own ref_lists" on public.ref_lists;
 create policy "own ref_lists" on public.ref_lists for all to authenticated
     using ((select auth.uid()) = user_id) with check ((select auth.uid()) = user_id);
 
-revoke all on public.ref_scimago, public.ref_crest, public.ref_sanlic, public.ref_lists from anon;
-grant select, insert, update, delete on public.ref_scimago, public.ref_crest, public.ref_sanlic, public.ref_lists to authenticated;
+revoke all on public.ref_crest, public.ref_sanlic, public.ref_lists from anon;
+grant select, insert, update, delete on public.ref_crest, public.ref_sanlic, public.ref_lists to authenticated;
