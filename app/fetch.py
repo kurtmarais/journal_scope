@@ -54,7 +54,7 @@ class Fetcher:
         self,
         use_browser: bool = True,
         chromium_path: str | None = None,
-        timeout: float = 30.0,
+        timeout: float = 20.0,
         ttl: float = 6 * 3600,
         renderer=None,
     ) -> None:

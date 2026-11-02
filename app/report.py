@@ -5,8 +5,10 @@ from __future__ import annotations
 import asyncio
 from datetime import date
 
+import time
+
 from .fetch import Fetcher
-from .sources import FOUND, crest, journal_site, kanalregister, sanlic, scopus
+from .sources import ERROR, FOUND, crest, journal_site, kanalregister, sanlic, scopus, source_result
 from .util import looks_like_issn, normalise_issn
 
 
@@ -76,6 +78,25 @@ def _glance(report: dict) -> list[dict]:
     return out
 
 
+# Longest wait per source before it is reported as not answering (seconds).
+LIMITS = {"scopus": 30, "crest": 30, "sanlic": 90, "kanalregister": 60, "journal_site": 75}
+NAMES = {"scopus": scopus.NAME, "crest": crest.NAME, "sanlic": sanlic.NAME,
+         "kanalregister": kanalregister.NAME, "journal_site": journal_site.NAME}
+
+
+async def _timed(key: str, coro, timings: dict, progress):
+    """Run one source with a time limit, recording how long it took."""
+    start = time.monotonic()
+    progress(key, "working")
+    try:
+        result = await asyncio.wait_for(coro, LIMITS[key])
+    except asyncio.TimeoutError:
+        result = source_result(NAMES[key], ERROR, error=f"No answer within {LIMITS[key]} seconds; try again later.")
+    timings[key] = round(time.monotonic() - start, 1)
+    progress(key, result[0]["status"] if isinstance(result, tuple) else result["status"])
+    return result
+
+
 async def build_report(
     fetcher: Fetcher,
     query: str,
@@ -83,12 +104,16 @@ async def build_report(
     site_url: str | None = None,
     scopus_key: str | None = None,
     scopus_token: str | None = None,
+    progress=lambda key, state: None,
 ) -> dict:
     query = (query or "").strip()
     issn = normalise_issn(query) if looks_like_issn(query) else None
+    timings: dict[str, float] = {}
 
-    sj, candidates = await scopus.lookup(fetcher, query, issn, source_id, key=scopus_key, token=scopus_token)
-    report: dict = {"query": query, "candidates": candidates, "sources": {"scopus": sj}}
+    res = await _timed("scopus", scopus.lookup(fetcher, query, issn, source_id, key=scopus_key, token=scopus_token),
+                       timings, progress)
+    sj, candidates = res if isinstance(res, tuple) else (res, [])
+    report: dict = {"query": query, "candidates": candidates, "sources": {"scopus": sj}, "timings": timings}
 
     sjd = sj["data"] if sj["status"] == FOUND else {}
     title = sjd.get("title") or (None if issn else query or None)
@@ -110,16 +135,16 @@ async def build_report(
         if not url:
             k = await kanal_task
             url = k["data"].get("homepage") if k["status"] == FOUND else None
-        return await journal_site.lookup(fetcher, url)
+        return await _timed("journal_site", journal_site.lookup(fetcher, url), timings, progress)
 
-    kanal_task = asyncio.ensure_future(kanalregister.lookup(fetcher, title, issns))
+    kanal_task = asyncio.ensure_future(_timed("kanalregister", kanalregister.lookup(fetcher, title, issns), timings, progress))
     if not title:   # CREST searches by title only: get it from Kanalregister first
         k = await kanal_task
         if k["status"] == FOUND and k["data"].get("title"):
             title = k["data"]["title"]
     crest_r, sanlic_r, site_r = await asyncio.gather(
-        crest.lookup(fetcher, title, issns),
-        sanlic.lookup(fetcher, title, issns),
+        _timed("crest", crest.lookup(fetcher, title, issns), timings, progress),
+        _timed("sanlic", sanlic.lookup(fetcher, title, issns), timings, progress),
         site_after_kanal(kanal_task),
     )
     kanal_r = await kanal_task

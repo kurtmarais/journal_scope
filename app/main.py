@@ -48,11 +48,17 @@ app.mount("/static", StaticFiles(directory=STATIC), name="static")
 app.mount("/web", StaticFiles(directory=WEB), name="web")
 
 
+app.state.progress = {}
+
+
 async def run_lookup(q: str, sid: str | None = None, site: str | None = None) -> dict:
     if site and not site.startswith(("http://", "https://")):
         site = "https://" + site
     key, token = app.state.scopus_credentials()
-    return await build_report(app.state.fetcher, q, source_id=sid, site_url=site, scopus_key=key, scopus_token=token)
+    progress = {}
+    app.state.progress = progress      # shown live in the window while a lookup runs
+    return await build_report(app.state.fetcher, q, source_id=sid, site_url=site, scopus_key=key, scopus_token=token,
+                              progress=lambda k, state: progress.__setitem__(k, state))
 
 
 @app.get("/")
@@ -98,6 +104,11 @@ async def history_delete(uid: str):
     app.state.db.delete_report(uid)
     app.state.on_report(uid)
     return {"ok": True}
+
+
+@app.get("/api/progress")
+async def progress():
+    return app.state.progress
 
 
 @app.get("/api/status")

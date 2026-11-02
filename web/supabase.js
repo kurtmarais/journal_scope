@@ -16,10 +16,14 @@ export class Supabase {
     const h = { apikey: this.key, "Content-Type": "application/json", Accept: "application/json", ...headers };
     if (token) h.Authorization = `Bearer ${token}`;
     let resp;
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), path.startsWith("/functions/") ? 30000 : 20000);
     try {
-      resp = await fetch(url, { method, headers: h, body: body === undefined ? undefined : JSON.stringify(body) });
+      resp = await fetch(url, { method, headers: h, body: body === undefined ? undefined : JSON.stringify(body), signal: ctrl.signal });
     } catch (e) {
-      throw new SyncError("Offline or Supabase unreachable");
+      throw new SyncError(ctrl.signal.aborted ? "No answer in time; check your connection and try again" : "Offline or Supabase unreachable");
+    } finally {
+      clearTimeout(timer);
     }
     const text = await resp.text();
     let data = null;

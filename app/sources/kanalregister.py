@@ -131,7 +131,7 @@ async def lookup(fetcher: Fetcher, title: str | None, issns: list[str]) -> dict:
         jid = None
         for term in terms:
             url = search_url(term)
-            html = await fetcher.render(url, wait_for='a[href*="tidsskrift?id="]', wait_ms=12000)
+            html = await fetcher.render(url, wait_for='a[href*="tidsskrift?id="]', wait_ms=8000)
             hits = parse_search(html)
             if hits and term in issns:
                 jid = hits[0]["id"]
@@ -142,7 +142,7 @@ async def lookup(fetcher: Fetcher, title: str | None, issns: list[str]) -> dict:
                 jid = exact[0]["id"]
                 break
         if jid is None and title and issns:
-            html = await fetcher.render(search_url(title), wait_for='a[href*="tidsskrift?id="]', wait_ms=12000)
+            html = await fetcher.render(search_url(title), wait_for='a[href*="tidsskrift?id="]', wait_ms=8000)
             exact = [h for h in parse_search(html) if normalise_title(h["title"]) == normalise_title(title)]
             jid = exact[0]["id"] if exact else None
         if jid is None:

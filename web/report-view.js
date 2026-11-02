@@ -228,6 +228,8 @@ export function renderReport(report) {
   return h("div", { class: "report" },
     h("div", { class: "identity" }, h("h2", {}, id.title || report.query), h("div", { class: "meta" }, meta)),
     glanceTiles(report.glance),
+    report.timings && Object.keys(report.timings).length > 0 && h("p", { class: "timings" },
+      "Time taken: " + Object.entries(report.timings).map(([k, v]) => `${{ scopus: "Scopus", crest: "CREST", sanlic: "SANLiC", kanalregister: "Kanalregister", journal_site: "journal site" }[k] || k} ${v} s`).join(" · ")),
     h("div", { class: "cards" },
       s.scopus ? scopusCard(s.scopus) : s.scimago ? scimagoCard(s.scimago) : null, crestCard(s.crest), kanalCard(s.kanalregister), sanlicCard(s.sanlic), siteCard(s.journal_site)));
 }

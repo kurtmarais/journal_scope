@@ -22,6 +22,7 @@ a { color: var(--accent); }
 .identity { margin: 6px 0 10px; }
 .identity h2 { margin: 0 0 4px; font-size: 1.35rem; }
 .identity .meta { color: var(--muted); }
+.timings { color: var(--muted); font-size: .75rem; margin: -12px 0 14px; }
 .glance { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 10px; margin: 14px 0 22px; }
 .tile { border-radius: var(--radius); padding: 10px 12px; }
 .tile .l { font-size: .78rem; opacity: .85; }

@@ -122,3 +122,22 @@ def test_scopus_falls_back_when_citescore_view_is_refused(tmp_path):
     sc = r["sources"]["scopus"]
     assert seen[:2] == ["CITESCORE", "ENHANCED"] and sc["status"] == "found"
     assert sc["data"]["subject_ranks"] and sc["data"]["ranks_unavailable"] is False and sc["note"] is None
+
+
+def test_hanging_source_times_out_without_blocking_the_report(tmp_path, monkeypatch):
+    import app.report as rep
+    from app.sources import kanalregister
+
+    async def hang(*a, **k):
+        await asyncio.sleep(60)
+
+    monkeypatch.setattr(kanalregister, "lookup", hang)
+    monkeypatch.setitem(rep.LIMITS, "kanalregister", 0.3)
+    seen = {}
+    fetcher = FakeFetcher(make_xlsx(tmp_path / "l.xlsx"))
+    r = asyncio.run(build_report(fetcher, "1532-0464", scopus_key="test-key", progress=lambda k, s: seen.__setitem__(k, s)))
+    k = r["sources"]["kanalregister"]
+    assert k["status"] == "error" and "No answer within 0.3 seconds" in k["error"]
+    assert r["sources"]["crest"]["status"] == "found" and r["sources"]["journal_site"]["status"] == "found"
+    assert set(r["timings"]) == {"scopus", "crest", "sanlic", "kanalregister", "journal_site"}
+    assert seen["kanalregister"] == "error" and seen["scopus"] == "found"

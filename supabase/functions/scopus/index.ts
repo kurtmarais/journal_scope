@@ -39,13 +39,23 @@ Deno.serve(async (req) => {
   else if (title) target = `${API}?title=${encodeURIComponent(title)}&count=25`;
   else return reply({ error: "Give issn or title" }, 400);
 
-  let resp = await fetch(target, { headers });
+  const get = (url: string) => fetch(url, { headers, signal: AbortSignal.timeout(15000) });
+  let resp: Response;
+  try {
+    resp = await get(target);
+  } catch {
+    return reply({ error: "Elsevier did not answer within 15 seconds" }, 504);
+  }
   let limited = false;
   // CITESCORE has the subject ranks; without that entitlement Elsevier answers
   // 400/403, so fall back to ENHANCED, then STANDARD (CiteScore value, no ranks).
   for (const view of ["ENHANCED", "STANDARD"]) {
     if (!target.includes("view=CITESCORE") || (resp.status !== 400 && resp.status !== 403)) break;
-    resp = await fetch(target.replace("view=CITESCORE", `view=${view}`), { headers });
+    try {
+      resp = await get(target.replace("view=CITESCORE", `view=${view}`));
+    } catch {
+      return reply({ error: "Elsevier did not answer within 15 seconds" }, 504);
+    }
     limited = true;
   }
   if (resp.status === 404) return reply({ "serial-metadata-response": { entry: [] } });

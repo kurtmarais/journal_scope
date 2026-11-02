@@ -21,7 +21,7 @@ import time
 from concurrent.futures import Future
 from pathlib import Path
 
-from PySide6.QtCore import QObject, QTimer, QUrl, Signal
+from PySide6.QtCore import QObject, Qt, QTimer, QUrl, Signal
 from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineProfile
 from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWidgets import QDialog, QLabel, QVBoxLayout
@@ -33,7 +33,7 @@ CHALLENGE_JS = r"""(() => {
 })()"""
 
 SHOW_CHECK_AFTER_S = 2   # a check page is shown to the user as soon as it has rendered
-HUMAN_CHECK_S = 150      # time allowed to complete it
+HUMAN_CHECK_S = 60       # time allowed to complete it (the source's own limit also applies)
 
 
 class FetchFailed(Exception):
@@ -107,6 +107,9 @@ class QtRenderer(QObject):
     def _check(self, job: _Job, raw) -> None:
         if job.done:
             return
+        if job.future.cancelled():          # the lookup gave up on this source
+            self._finish(job, error="cancelled")
+            return
         try:
             st = json.loads(raw) if raw else {}
         except (TypeError, ValueError):
@@ -159,6 +162,7 @@ class QtRenderer(QObject):
     def _show_check(self, job: _Job) -> None:
         host = QUrl(job.url).host()
         dlg = QDialog()
+        dlg.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)   # never hidden behind the main window
         dlg.setWindowTitle(f"Confirm on {host}")
         dlg.resize(560, 640)
         lay = QVBoxLayout(dlg)

@@ -53,7 +53,17 @@ async function run(params) {
   const qs = new URLSearchParams(Object.entries(params).filter(([, v]) => v));
   $("#go").disabled = true;
   $("#out").replaceChildren();
-  setStatus("Checking SCImago, CREST, Kanalregister, SANLiC and the journal website. This usually takes 15-60 seconds.");
+  const LABELS = { scopus: "Scopus", crest: "CREST", sanlic: "SANLiC", kanalregister: "Kanalregister", journal_site: "Journal website" };
+  const STATE = { working: "checking…", found: "done", not_found: "done", skipped: "skipped", error: "failed" };
+  const started = Date.now();
+  setStatus("Checking Scopus, CREST, SANLiC, Kanalregister and the journal website…");
+  const poll = setInterval(async () => {
+    try {
+      const p = await (await fetch("/api/progress")).json();
+      const parts = Object.keys(LABELS).filter((k) => p[k]).map((k) => `${LABELS[k]}: ${STATE[p[k]] || p[k]}`);
+      setStatus(`Checking (${Math.round((Date.now() - started) / 1000)} s)… ` + parts.join(" · "));
+    } catch { /* ignore */ }
+  }, 700);
   try {
     const res = await fetch("/api/report?" + qs.toString());
     if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || `HTTP ${res.status}`);
@@ -69,6 +79,7 @@ async function run(params) {
   } catch (err) {
     setStatus("Lookup failed: " + err.message, true);
   } finally {
+    clearInterval(poll);
     $("#go").disabled = false;
   }
 }
