@@ -10,7 +10,7 @@ import traceback
 from pathlib import Path
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QAction, QGuiApplication, QIcon
+from PySide6.QtGui import QAction, QCursor, QGuiApplication, QIcon
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import QApplication, QMenu, QMessageBox, QSystemTrayIcon
 
@@ -20,6 +20,7 @@ from app.storage import Database
 from . import __version__, settings as settings_mod, updater, winplatform
 from .sync import SyncEngine
 from .sync_qt import SyncController, SyncDialog
+from .renderer import QtRenderer
 from .window import MainWindow, Server
 
 SERVER_NAME = f"journal-scope-{getpass.getuser()}"
@@ -69,20 +70,23 @@ class Desktop:
         self.icon = QIcon(str(ICON))
         self.db = Database(data_dir / "journal_scope.db")
 
-        self.server = Server(self.db, self._status, self._on_local_change)
+        self.renderer = QtRenderer(data_dir, app)
+        self.server = Server(self.db, self._status, self._on_local_change, renderer=self.renderer.submit)
         self.server.start()
         self.engine = SyncEngine(self.db, self.settings, self._save_settings, self.server.lookup)
         self.sync = SyncController(self.engine)
 
         self.win = MainWindow(self.server.url, self.icon)
         self.sync.reports_changed.connect(self.win.refresh_history)
+        self.menu = self._build_menu()
+        self.win.page.app_link.connect(self._app_link)
         self.tray = self._build_tray()
         if self.tray is None:
             self.win.hide_on_close = False
             app.setQuitOnLastWindowClosed(True)
         else:
             self.win.on_first_hide = lambda: self.tray.showMessage(
-                "Journal Scope", "Still running in the tray, so phone lookups keep working. Right-click the icon to quit.",
+                "Journal Scope", "Still running in the tray (click ^ by the clock if hidden), so phone lookups keep working. Quit from Settings or the tray icon.",
                 self.icon, 4000)
         if not start_hidden:
             self.win.show_and_raise()
@@ -99,12 +103,15 @@ class Desktop:
     def _save_settings(self, s: dict) -> None:
         settings_mod.save(self.settings_path, s)
 
-    # ----------------------------------------------------------------- tray
-    def _build_tray(self) -> QSystemTrayIcon | None:
-        if not QSystemTrayIcon.isSystemTrayAvailable():
-            return None
-        tray = QSystemTrayIcon(self.icon, self.app)
-        tray.setToolTip("Journal Scope")
+    # ------------------------------------------------------- menu and tray
+    def _app_link(self, action: str) -> None:
+        """The Settings button in the window."""
+        if action == "phone-sync":
+            self.open_sync()
+        elif action == "menu":
+            self.menu.popup(QCursor.pos())
+
+    def _build_menu(self) -> QMenu:
         menu = QMenu()
         menu.addAction("Open Journal Scope", self.win.show_and_raise)
         menu.addAction("Phone sync…", self.open_sync)
@@ -118,6 +125,14 @@ class Desktop:
             menu.addAction("Update and restart", self.update_and_restart)
         menu.addSeparator()
         menu.addAction("Quit", self.app.quit)
+        return menu
+
+    def _build_tray(self) -> QSystemTrayIcon | None:
+        if not QSystemTrayIcon.isSystemTrayAvailable():
+            return None
+        tray = QSystemTrayIcon(self.icon, self.app)
+        tray.setToolTip("Journal Scope")
+        menu = self.menu
         tray.setContextMenu(menu)
         tray.activated.connect(
             lambda reason: self.win.show_and_raise() if reason == QSystemTrayIcon.ActivationReason.Trigger else None)
@@ -151,6 +166,7 @@ class Desktop:
 
     def shutdown(self) -> None:
         self.sync.stop()
+        self.renderer.shutdown()
         self.win.shutdown()
         self.server.stop()
         if self.restart_after_update or self.settings.get("auto_update", True):

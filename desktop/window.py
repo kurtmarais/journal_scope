@@ -9,7 +9,7 @@ import time
 import urllib.request
 
 import uvicorn
-from PySide6.QtCore import QUrl
+from PySide6.QtCore import QUrl, Signal
 from PySide6.QtGui import QDesktopServices, QIcon
 from PySide6.QtWebEngineCore import QWebEnginePage
 from PySide6.QtWebEngineWidgets import QWebEngineView
@@ -27,8 +27,9 @@ def _free_port() -> int:
 class Server:
     """Runs the FastAPI app on 127.0.0.1 in a background thread."""
 
-    def __init__(self, db, status, on_report):
+    def __init__(self, db, status, on_report, renderer=None):
         web.app.state.db = db
+        web.app.state.renderer = renderer
         web.app.state.status = status
         web.app.state.on_report = on_report
         self.port = _free_port()
@@ -59,13 +60,19 @@ class Server:
 
 
 class _Page(QWebEnginePage):
-    """Keeps the app inside the window; every outside link opens in the default browser."""
+    """Keeps the app inside the window; every outside link opens in the default browser.
+    Links to /desktop/<action> (the Settings button) are handed to the desktop app."""
+
+    app_link = Signal(str)
 
     def __init__(self, base: str, parent=None):
         super().__init__(parent)
         self.base = base
 
     def acceptNavigationRequest(self, url: QUrl, nav_type, is_main_frame: bool) -> bool:
+        if url.toString().startswith(self.base + "desktop/"):
+            self.app_link.emit(url.path().rsplit("/", 1)[-1])
+            return False
         if url.toString().startswith(self.base) or url.scheme() in ("data", "about"):
             return True
         if url.scheme() in ("http", "https", "mailto"):
@@ -88,7 +95,7 @@ class MainWindow(QMainWindow):
         self.view = QWebEngineView(self)
         self.page = _Page(url, self.view)
         self.view.setPage(self.page)
-        self.view.setUrl(QUrl(url))
+        self.view.setUrl(QUrl(url + "?desktop=1"))
         self.setCentralWidget(self.view)
         self.hide_on_close = True
         self.on_first_hide = None

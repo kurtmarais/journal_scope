@@ -56,7 +56,11 @@ class Fetcher:
         chromium_path: str | None = None,
         timeout: float = 30.0,
         ttl: float = 6 * 3600,
+        renderer=None,
     ) -> None:
+        # renderer(url, wait_for, wait_ms) -> concurrent.futures.Future[str]: the desktop
+        # app passes its Qt WebEngine renderer; Playwright is used without it.
+        self.renderer = renderer
         self.use_browser = use_browser and os.environ.get("JOURNAL_SCOPE_NO_BROWSER") != "1"
         self.chromium_path = chromium_path or os.environ.get("JOURNAL_SCOPE_CHROMIUM") or None
         self.timeout = timeout
@@ -147,13 +151,20 @@ class Fetcher:
         wait_ms: int = 15000,
         settle_ms: int = 800,
     ) -> str:
-        """Load `url` in headless Chromium and return the rendered HTML."""
-        if not self.use_browser:
+        """Load `url` in a browser engine and return the rendered HTML."""
+        if not self.use_browser and self.renderer is None:
             raise FetchError("Browser rendering is disabled")
         key = f"render:{url}|{wait_for}"
         hit = self._cache_get(key)
         if hit is not None:
             return hit
+        if self.renderer is not None:
+            try:
+                html = await asyncio.wrap_future(self.renderer(url, wait_for, wait_ms))
+            except Exception as exc:
+                raise FetchError(str(exc)) from exc
+            self._cache[key] = (time.time(), html)
+            return html
         browser = await self._ensure_browser()
         async with self._browser_slots:
             context = await browser.new_context(user_agent=USER_AGENT, locale="en-GB")
@@ -193,7 +204,7 @@ class Fetcher:
             reason = f"HTTP {resp.status_code}"
         except FetchError as exc:
             reason = str(exc)
-        if not self.use_browser:
+        if not self.use_browser and self.renderer is None:
             raise FetchError(f"{url} refused a plain request ({reason}) and browser rendering is disabled")
         html = await self.render(url, wait_for=wait_for)
         if looks_blocked(200, html):

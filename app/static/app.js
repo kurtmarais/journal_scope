@@ -86,6 +86,7 @@ $("#search").addEventListener("submit", (e) => {
 });
 
 window.journalScope = { refreshHistory };
+if (new URLSearchParams(location.search).has("desktop")) $("#desk").hidden = false;
 refreshHistory();
 refreshStatus();
 setInterval(refreshStatus, 15000);

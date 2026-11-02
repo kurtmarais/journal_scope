@@ -37,18 +37,19 @@ py -m pip install --user -r requirements.txt
 pyw run_journal_scope.py
 ```
 
-Then right-click the tray icon:
+Then open **⚙ Settings** (bottom left of the window), or right-click the tray icon (Windows may tuck it under the **^** by the clock; drag it onto the taskbar to keep it visible):
+- **Phone sync…** connects the phone app (see [docs/phone-setup.md](docs/phone-setup.md)).
 - **Add desktop shortcut** puts an icon on your real (OneDrive) Desktop.
 - **Start with Windows** keeps it in the tray from sign-in, so phone requests are handled.
 - **Update and restart** pulls the latest version. It also updates itself when you quit, as Sidebar does.
 
-Page rendering uses the Microsoft Edge already on Windows, so no browser download is needed. If Edge can't be used, run `py -m playwright install chromium` once.
+Pages are loaded in the app's own embedded browser (Qt WebEngine), so nothing else needs installing. Some sites (SCImago, some publishers) occasionally show an "are you a person" check; when that happens a small window opens with the check for you to complete, and the lookup carries on. The site's cookie is kept, so it is rarely needed twice.
 
 Data lives in `%APPDATA%\JournalScope`: `journal_scope.db` (history), `settings.json`, `launch.log`, `error.log`, `update.log`, and `startup-crash.log` if it fails to start.
 
 ## How lookups work
 
-- SCImago, Kanalregister and publisher sites are loaded in a headless browser (SCImago and most publishers block plain scripted requests; Kanalregister builds its pages in the browser). CREST and SANLiC are fetched directly.
+- SCImago, Kanalregister and publisher sites are loaded in the app's embedded browser (Kanalregister builds its pages in the browser; SCImago and many publishers refuse plain scripted requests). CREST and SANLiC are fetched directly. A lookup started from the phone while nobody is at the PC fails for a site that asks for a human check; the phone shows the error.
 - SANLiC's "Journals covered by R&P agreements" spreadsheet is downloaded and cached for 7 days.
 - Publisher statistics are found by their labels. Known statistics pages are tried first for Elsevier (Journal Insights), Springer, MDPI, Taylor & Francis, Frontiers, BMC and Wiley; other publishers use the homepage only. If the homepage found is wrong, paste the journal's URL into "Journal website".
 

@@ -38,11 +38,25 @@ def test_window_loads_ui(tmp_path):
     QTimer.singleShot(30000, loop.quit)
     loop.exec()
     timer.stop()
+    links = []
+    desk.win.page.app_link.disconnect(desk._app_link)   # don't open the real (modal) dialog
+    desk.win.page.app_link.connect(links.append)
+    from PySide6.QtCore import QUrl
+    desk.win.page.acceptNavigationRequest(QUrl(desk.server.url + "desktop/phone-sync"), None, True)
+    seen = {}
+    desk.win.page.runJavaScript("!document.querySelector('#desk').hidden", 0, lambda v: seen.setdefault("settings", v))
+    for _ in range(50):
+        QCoreApplication.processEvents()
+        if "settings" in seen:
+            break
+        import time; time.sleep(0.05)
     try:
         assert result.get("first") == "Saved Journal"
+        assert links == ["phone-sync"] and seen.get("settings") is True
         assert desk.sync.status == "Phone sync off"
     finally:
         desk.sync.stop()
+        desk.renderer.shutdown()
         desk.win.shutdown()
         desk.server.stop()
         QCoreApplication.processEvents()

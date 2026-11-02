@@ -30,7 +30,7 @@ WEB = ROOT / "web"   # the phone app; its report renderer is shared with this UI
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    app.state.fetcher = Fetcher()
+    app.state.fetcher = Fetcher(renderer=app.state.renderer)
     app.state.loop = asyncio.get_running_loop()
     if getattr(app.state, "db", None) is None:
         app.state.db = Database(default_data_dir() / "journal_scope.db")
@@ -40,6 +40,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Journal Scope", lifespan=lifespan)
 app.state.db = None
+app.state.renderer = None        # the desktop app's Qt WebEngine renderer
 app.state.status = lambda: {}          # replaced by the desktop app (sync status)
 app.state.on_report = lambda uid: None  # replaced by the desktop app (trigger a sync)
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
