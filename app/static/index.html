@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Journal Scope</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <header class="top">
+    <div class="wrap">
+      <h1>Journal Scope</h1>
+      <p class="sub">One summary of SCImago, CREST (DHET subsidy), Kanalregister, SANLiC and the journal's own site.</p>
+      <form id="search" autocomplete="off">
+        <label class="field grow">
+          <span>Journal title or ISSN</span>
+          <input id="q" name="q" required placeholder="e.g. 1532-0464 or Journal of Biomedical Informatics">
+        </label>
+        <label class="field">
+          <span>Journal website <em>(optional)</em></span>
+          <input id="site" name="site" placeholder="Overrides the homepage found">
+        </label>
+        <button type="submit" id="go">Check journal</button>
+      </form>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <div id="status" class="status" hidden></div>
+    <section id="candidates" hidden></section>
+    <section id="report" hidden></section>
+  </main>
+
+  <footer class="wrap foot">
+    Values are copied from each source as published there; follow the links to verify. Nothing is scored or inferred.
+  </footer>
+  <script src="/static/app.js"></script>
+</body>
+</html>
