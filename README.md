@@ -12,9 +12,32 @@ Checks a journal's validity and credibility for publication by pulling, in one r
 
 Values are copied as each source states them, with a link back (and, for the journal site, the sentence each value was read from). Nothing is scored or combined.
 
-## Run it
+## Desktop app
 
-Requires Python 3.10+.
+Requires Python 3.10+ ([python.org](https://www.python.org/downloads/); on Windows tick "Add python.exe to PATH").
+
+- **Windows:** double-click `install.bat`.
+- **macOS / Linux:** run `bash install.sh` in this folder.
+
+The script installs everything and puts a **Journal Scope** icon on your desktop. The icon opens the app in its own window; closing the window stops it. On macOS, the first time, right-click the icon and choose Open. Run the script again after pulling updates.
+
+## Phone
+
+The lookups need Python and Chromium, so they can't run on a phone. Instead, run the server on a computer and add the page to the phone's home screen, where it behaves like an app with its own icon. Two ways:
+
+**A. Your own computer, via Tailscale (recommended: free, private, works away from home).**
+1. Install [Tailscale](https://tailscale.com/download) on the computer and the phone, signed in to the same account.
+2. On the computer, in this folder: `.venv/bin/uvicorn app.main:app --port 8000` (Windows: `.venv\Scripts\uvicorn app.main:app --port 8000`).
+3. In another terminal: `tailscale serve --bg 8000`. It prints an `https://<computer>.<tailnet>.ts.net` address.
+4. Open that address on the phone, then Share > Add to Home Screen (iPhone) or menu > Install app (Android).
+
+The computer must be on for the phone to use it. Because lookups come from your home connection, sites block them less than they would a cloud server.
+
+**B. A cloud host (always available).** Deploy the included `Dockerfile` to any container host (e.g. Render, Fly.io, Railway). Set `JOURNAL_SCOPE_KEY` to a long random value, then open `https://<your-app>/?key=<that value>` once on each device; the key is remembered. Expect a small monthly cost, and expect SCImago and some publisher sites to block a data-centre address more often than a home one.
+
+Installing to the home screen needs an HTTPS address, which both options provide.
+
+## Run it from a terminal
 
 ```bash
 python -m venv .venv

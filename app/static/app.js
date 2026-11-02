@@ -212,6 +212,10 @@ $("#search").addEventListener("submit", (e) => {
   run({ q: $("#q").value.trim(), site: $("#site").value.trim() });
 });
 
+if ("serviceWorker" in navigator && (location.protocol === "https:" || location.hostname === "127.0.0.1" || location.hostname === "localhost")) {
+  navigator.serviceWorker.register("/sw.js").catch(() => {});
+}
+
 // Support shareable links: /?q=1532-0464
 (() => {
   const p = new URLSearchParams(location.search);
