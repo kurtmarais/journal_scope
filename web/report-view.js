@@ -36,7 +36,8 @@ const STATUS_CHIP = {
   found: ["Found", "good"],
   not_found: ["Not found", "warn"],
   error: ["Could not check", "bad"],
-  skipped: ["Skipped", "neutral"],
+  skipped: ["Not checked", "neutral"],
+  working: ["Checking…", "neutral"],
 };
 
 function when(iso) {
@@ -74,7 +75,7 @@ function scimagoCard(r) {
       ["Country", d.country],
       ["Type", d.publication_type],
       ["Subject areas", areas],
-      ["Links", join([link(d.homepage, "Journal homepage"), link(d.how_to_publish, "How to publish")])],
+      ["Links", join([d.homepage && link(d.homepage, "Journal homepage"), d.how_to_publish && link(d.how_to_publish, "How to publish")])],
     ]));
     if (d.notice) body.push(h("p", { class: "note" }, d.notice));
     if ((d.category_quartiles || []).length) {
@@ -90,6 +91,35 @@ function scimagoCard(r) {
     }
   }
   return card("SCImago", "Existence and indexing, SJR / quartile, H-index, citations per document, related journals.", r, body, { site: "SCImago", wide: true });
+}
+
+function scopusCard(r) {
+  const d = r.data || {};
+  const body = [];
+  if (r.status === "found") {
+    const cs = d.citescore;
+    const pct = d.best_percentile != null ? `, best: ${Math.round(d.best_percentile)}th percentile` : "";
+    body.push(kv([
+      ["CiteScore", cs && cs.value != null ? [String(cs.value), " ", d.best_quartile && tag(d.best_quartile, quartileTone(d.best_quartile)),
+        h("span", { class: "ctx" }, ` (${cs.year || ""}${pct})`)] : ""],
+      ["CiteScore Tracker", d.citescore_tracker && d.citescore_tracker.value != null ? `${d.citescore_tracker.value} (${d.citescore_tracker.year}, in progress)` : ""],
+      ["SJR", d.sjr ? `${d.sjr.value} (${d.sjr.year})` : ""],
+      ["Coverage", d.coverage],
+      ["ISSN", (d.issns || []).join(", ")],
+      ["Publisher", d.publisher],
+      ["Type", d.type],
+      ["Links", join([d.homepage && link(d.homepage, "Journal homepage"), d.scopus_url && link(d.scopus_url, "Scopus source page")])],
+    ]));
+    if ((d.subject_ranks || []).length) {
+      body.push(h("table", {},
+        h("thead", {}, h("tr", {}, h("th", {}, "Subject"), h("th", {}, "Rank"), h("th", {}, "Percentile"), h("th", {}, "Quartile"))),
+        h("tbody", {}, d.subject_ranks.map((x) => h("tr", {}, h("td", {}, x.subject), h("td", {}, String(x.rank ?? "")),
+          h("td", {}, x.percentile != null ? `${Math.round(x.percentile)}th` : ""), h("td", {}, x.quartile ? tag(x.quartile, quartileTone(x.quartile)) : ""))))));
+    } else if (d.ranks_unavailable) {
+      body.push(h("p", { class: "note" }, "Subject ranks and quartiles were not available for this lookup."));
+    }
+  }
+  return card("Scopus", "Existence and indexing, CiteScore and its quartile in each subject (Q1 = 75th percentile and above), SJR.", r, body, { site: "Scopus", wide: true });
 }
 
 function crestCard(r) {
@@ -199,8 +229,10 @@ export function renderReport(report) {
   return h("div", { class: "report" },
     h("div", { class: "identity" }, h("h2", {}, id.title || report.query), h("div", { class: "meta" }, meta)),
     glanceTiles(report.glance),
+    report.timings && Object.keys(report.timings).length > 0 && h("p", { class: "timings" },
+      "Time taken: " + Object.entries(report.timings).map(([k, v]) => `${{ scopus: "Scopus", crest: "CREST", sanlic: "SANLiC", kanalregister: "Kanalregister", journal_site: "journal site" }[k] || k} ${v} s`).join(" · ")),
     h("div", { class: "cards" },
-      scimagoCard(s.scimago), crestCard(s.crest), kanalCard(s.kanalregister), sanlicCard(s.sanlic), siteCard(s.journal_site)));
+      s.scopus ? scopusCard(s.scopus) : s.scimago ? scimagoCard(s.scimago) : null, crestCard(s.crest), kanalCard(s.kanalregister), sanlicCard(s.sanlic), siteCard(s.journal_site)));
 }
 
 export function renderCandidates(query, candidates, onPick) {
@@ -210,4 +242,159 @@ export function renderCandidates(query, candidates, onPick) {
     h("ul", { class: "candidates" }, candidates.map((c) =>
       h("li", {}, h("button", { type: "button", onclick: () => onPick(c) },
         c.title, h("small", {}, [c.country, c.publisher].filter(Boolean).join(" · ")))))));
+}
+
+
+// ------------------------------------------------------------- phone lists
+// The phone gets Scopus data through a Supabase Edge Function (it holds the
+// Elsevier API key) and searches the CREST and SANLiC lists the PC loads into
+// Supabase, then builds a report in the same shape as the PC's.
+
+export function normaliseTitle(v) {
+  if (!v) return "";
+  let s = v.normalize("NFKD").replace(/[̀-ͯ]/g, "").toLowerCase();
+  s = s.replace(/&/g, " and ").replace(/,\s*the\s*$/, "").replace(/^the\s+/, "");
+  return s.replace(/[^a-z0-9]+/g, " ").replace(/\s+/g, " ").trim();
+}
+
+export function normaliseIssn(v) {
+  const m = /^\s*(\d{4})[-\s]?(\d{3}[\dXx])\s*$/.exec(v || "");
+  return m ? `${m[1]}-${m[2].toUpperCase()}` : null;
+}
+
+const SANLIC_PAGES = {
+  ELSEVIER: "sciencedirect-elsevier", "TAYLOR & FRANCIS": "taylor-francis", SPRINGER: "springer", WILEY: "wiley",
+  SAGE: "sage-publishing", OUP: "oxford-university-press-journals", CUP: "cambridge-university-press", EMERALD: "emerald",
+  BENTHAM: "bentham-science-publishers-2", ACS: "american-chemical-society-acs", ACM: "association-for-computing-machinery-acm",
+  IOP: "iopscience-extra", RSC: "royal-society-of-chemistry", AIP: "american-institute-of-physics-2",
+  "ROYAL SOCIETY": "royal-society", "THE COMPANY OF BIOLOGIST": "the-company-of-biologists",
+  "THE COMPANY OF BIOLOGISTS": "the-company-of-biologists",
+};
+
+const loadedNote = (meta) => meta ? `From the ${meta.version || "current"} list, loaded ${new Date(meta.refreshed_at).toLocaleDateString()}.` : null;
+
+// --- Scopus (Elsevier Serial Title API), same parsing as app/sources/scopus.py
+const asList = (v) => (v == null ? [] : Array.isArray(v) ? v : [v]);
+const num = (v) => (v == null || v === "" || isNaN(Number(v)) ? null : Number(v));
+export const scopusQuartile = (p) => (p == null ? null : p >= 75 ? "Q1" : p >= 50 ? "Q2" : p >= 25 ? "Q3" : "Q4");
+
+export function scopusEntries(payload) {
+  const resp = (payload && payload["serial-metadata-response"]) || {};
+  return asList(resp.entry).filter((e) => e && !e.error && (e["dc:title"] || e["source-id"]));
+}
+
+function issnsOf(e) {
+  return [e["prism:issn"], e["prism:eIssn"]].map(normaliseIssn).filter(Boolean)
+    .filter((v, i, a) => a.indexOf(v) === i);
+}
+
+export function scopusCandidates(items) {
+  return items.map((e) => ({ source_id: issnsOf(e)[0], title: e["dc:title"] || "", publisher: e["dc:publisher"] || null, country: null }))
+    .filter((c) => c.source_id);
+}
+
+export function parseScopusEntry(e, limited = false) {
+  const subjects = Object.fromEntries(asList(e["subject-area"]).filter((x) => x["@code"]).map((x) => [String(x["@code"]), x.$]));
+  const links = Object.fromEntries(asList(e.link).map((l) => [l["@ref"], l["@href"]]));
+  const cs = e.citeScoreYearInfoList || {};
+  let citescore = cs.citeScoreCurrentMetric != null ? { year: num(cs.citeScoreCurrentMetricYear), value: num(cs.citeScoreCurrentMetric) } : null;
+  const tracker = cs.citeScoreTracker != null ? { year: num(cs.citeScoreTrackerYear), value: num(cs.citeScoreTracker) } : null;
+  const ranks = [];
+  const complete = asList(cs.citeScoreYearInfo).filter((y) => (y["@status"] || "").toLowerCase() === "complete")
+    .sort((a, b) => num(b["@year"]) - num(a["@year"]));
+  if (complete.length) {
+    const year = num(complete[0]["@year"]);
+    for (const il of asList(complete[0].citeScoreInformationList)) {
+      for (const info of asList(il.citeScoreInfo)) {
+        if ((info.docType || "all") !== "all") continue;
+        if (!citescore || citescore.year === year) citescore = { year, value: num(info.citeScore) };
+        for (const r of asList(info.citeScoreSubjectRank)) {
+          const p = num(r.percentile);
+          ranks.push({ subject: subjects[String(r.subjectCode)] || String(r.subjectCode), code: String(r.subjectCode), year,
+            rank: r.rank, percentile: p, quartile: scopusQuartile(p) });
+        }
+      }
+    }
+  }
+  ranks.sort((a, b) => (b.percentile || 0) - (a.percentile || 0));
+  const sjr = asList((e.SJRList || {}).SJR).map((x) => ({ year: num(x["@year"]), value: num(x.$) }))
+    .filter((x) => x.year && x.value != null).sort((a, b) => b.year - a.year)[0] || null;
+  const start = e.coverageStartYear, end = e.coverageEndYear;
+  return {
+    title: e["dc:title"] || "", publisher: e["dc:publisher"] || null, source_id: e["source-id"] ? String(e["source-id"]) : null,
+    type: e["prism:aggregationType"] || null, issns: issnsOf(e), subjects: Object.values(subjects),
+    citescore, citescore_tracker: tracker, subject_ranks: ranks,
+    best_quartile: ranks.length ? ranks[0].quartile : null, best_percentile: ranks.length ? ranks[0].percentile : null,
+    sjr, coverage: start && end ? `${start}-${end}` : null, coverage_last_year: num(end),
+    homepage: links.homepage || null, scopus_url: links["scopus-source"] || null,
+    ranks_unavailable: !ranks.length && (limited || citescore != null),
+  };
+}
+
+function scopusSource(d, note, error) {
+  const url = (d && d.scopus_url) || "https://www.scopus.com/sources";
+  if (error) return { status: "error", url, data: {}, error };
+  if (!d) return { status: "not_found", url, data: {}, note: "Not in Scopus, so the journal is not (or no longer) indexed there." };
+  return { status: "found", url, data: d, note };
+}
+
+function crestSource(r, meta, title) {
+  const url = "https://db.crest.sun.ac.za/zapublications/";
+  if (!r) return { status: "not_found", url, data: { eligible: false },
+    note: "Not on the DHET-approved journal list, so articles are not eligible for subsidy. " + (loadedNote(meta) || "") };
+  const eligible = /eligible for subsidy|^active$/i.test(r.status || "");
+  return { status: "found", url, note: loadedNote(meta), data: {
+    title: r.title, publisher: r.publisher, issn: r.issn, eissn: r.eissn, journal_id: r.key,
+    status: r.status || "Listed", eligible, reason: r.reason } };
+}
+
+function sanlicSource(r, meta) {
+  const url = "https://sanlic.ac.za/read-and-publish-agreements/";
+  if (!r) return { status: "not_found", url, data: { included: false, title_list: meta && meta.source_url },
+    note: "Not on SANLiC's list of journals covered by R&P agreements; the APC is not covered by SANLiC. " + (loadedNote(meta) || "") };
+  const page = SANLIC_PAGES[(r.publisher || "").trim().toUpperCase()];
+  return { status: "found", url, note: loadedNote(meta), data: {
+    title: r.title, included: r.included, oa_type: r.oa_type, explanation: r.explanation, publisher: r.publisher,
+    agreement_page: page ? `https://sanlic.ac.za/${page}/` : null, title_list: meta && meta.source_url } };
+}
+
+export function quickReport(query, { scopus, scopusNote, scopusError, crest, sanlic, lists, issns, title }) {
+  const meta = Object.fromEntries((lists || []).map((l) => [l.key, l]));
+  const sj = scopusSource(scopus, scopusNote, scopusError);
+  const kanalTerm = (issns || [])[0] || title || query;
+  const sources = {
+    scopus: sj,
+    crest: crestSource(crest, meta.crest, title),
+    sanlic: sanlicSource(sanlic, meta.sanlic),
+    kanalregister: { status: "skipped", data: {},
+      url: `https://kanalregister.hkdir.no/en/sok?option=journals&input=${encodeURIComponent(kanalTerm)}`,
+      note: "Kanalregister builds its pages in a browser, so it is checked by your PC. Open it here, or get the full report from your PC." },
+    journal_site: { status: "skipped", data: {},
+      note: "Decision times, acceptance rate and APC come from the publisher's site, which your PC reads. Get the full report from your PC." },
+  };
+  const glance = [];
+  if (sj.status === "found") {
+    const d = sj.data;
+    const last = d.coverage_last_year || (d.citescore && d.citescore.year);
+    glance.push({ label: "Indexed in Scopus", value: d.coverage ? `Coverage ${d.coverage}` : "Listed",
+      tone: last >= new Date().getFullYear() - 2 ? "good" : "warn", source: "scopus" });
+    if (d.citescore && d.citescore.value != null) {
+      const extra = d.best_quartile && d.best_percentile != null ? ` (${d.best_quartile}, ${Math.round(d.best_percentile)}th percentile)` : "";
+      glance.push({ label: d.citescore.year ? `CiteScore ${d.citescore.year}` : "CiteScore", value: `${d.citescore.value.toFixed(1)}${extra}`,
+        tone: { Q1: "good", Q2: "good", Q3: "warn", Q4: "bad" }[d.best_quartile] || "neutral", source: "scopus" });
+    }
+    if (d.sjr) glance.push({ label: `SJR ${d.sjr.year}`, value: d.sjr.value.toFixed(3), tone: "neutral", source: "scopus" });
+  } else if (sj.status === "not_found") {
+    glance.push({ label: "Indexed in Scopus", value: "Not found", tone: "bad", source: "scopus" });
+  }
+  const c = sources.crest;
+  glance.push(c.status === "found" ? { label: "DHET subsidy", value: c.data.status, tone: c.data.eligible ? "good" : "bad", source: "crest" }
+    : { label: "DHET subsidy", value: "Not on approved list", tone: "bad", source: "crest" });
+  const n = sources.sanlic;
+  glance.push(n.status === "found" ? { label: "SANLiC APC agreement", value: (n.data.included ? "Covered" : "Not covered") + (n.data.oa_type ? ` (${n.data.oa_type})` : ""), tone: n.data.included ? "good" : "warn", source: "sanlic" }
+    : { label: "SANLiC APC agreement", value: "Not covered", tone: "warn", source: "sanlic" });
+  return {
+    query, quick: true, candidates: [], glance, sources,
+    identity: { title: title || query, issns: issns || [], publisher: sj.data.publisher || (c.data && c.data.publisher), country: sj.data.country },
+  };
 }

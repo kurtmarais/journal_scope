@@ -2,8 +2,9 @@
 // Reads reports your PC has produced (synced through your Supabase project) and
 // queues new lookups, which the PC runs the next time it syncs.
 import { SUPABASE_KEY, SUPABASE_URL } from "./config.js";
-import { h, renderCandidates, renderReport } from "./report-view.js";
+import { h, normaliseIssn, normaliseTitle, parseScopusEntry, quickReport, renderCandidates, renderReport, scopusCandidates, scopusEntries } from "./report-view.js";
 import { AuthError, Supabase, SyncError } from "./supabase.js";
+import { discover, renderDiscover } from "./discover.js";
 
 const root = document.getElementById("root");
 const LS = {
@@ -131,6 +132,126 @@ async function deleteReport(id) {
   render();
 }
 
+// ---------------------------------------------------------- phone search
+// Searches the lists the PC loads into Supabase. Runs entirely from the phone.
+async function scopusLookup(api, t, params) {
+  // Edge Function "scopus" calls Elsevier's Serial Title API with the key stored in Supabase.
+  return api.request("GET", "/functions/v1/scopus", { token: t, params });
+}
+
+async function quickSearch(query, site, sourceId = null) {
+  state.view = { name: "quick", query, site, loading: true };
+  render();
+  try {
+    const t = await token();
+    const api = sb();
+    const issn = sourceId || normaliseIssn(query);
+    const lists = await api.select("ref_lists", {}, t);
+    let scopus = null, scopusNote = null, scopusError = null;
+    try {
+      if (issn) {
+        const payload = await scopusLookup(api, t, { issn });
+        const entry = scopusEntries(payload)[0];
+        scopus = entry ? parseScopusEntry(entry, !!payload._limited) : null;
+        if (payload._limited) scopusNote = "CiteScore subject ranks need institutional access, which this lookup did not have.";
+      } else {
+        const found = scopusCandidates(scopusEntries(await scopusLookup(api, t, { title: query })));
+        const exact = found.filter((c) => normaliseTitle(c.title) === normaliseTitle(query));
+        const pick = found.length === 1 ? found[0] : exact.length === 1 ? exact[0] : null;
+        if (!pick && found.length > 1) {
+          state.view = { name: "quick", query, site, candidates: found };
+          render();
+          return;
+        }
+        if (pick) return quickSearch(query, site, pick.source_id);
+      }
+    } catch (e) {
+      scopusError = /404|not found/i.test(e.message)
+        ? "The Scopus lookup isn't set up yet: deploy the 'scopus' Edge Function (docs/phone-setup.md)."
+        : "Scopus lookup failed: " + e.message;
+    }
+    const issns = scopus ? scopus.issns : issn ? [issn] : [];
+    const title = scopus ? scopus.title : issn ? null : query;
+    const inList = `(${issns.join(",")})`;
+    const [crestRows, sanlicRows] = await Promise.all([
+      issns.length ? api.select("ref_crest", { or: `(issn.in.${inList},eissn.in.${inList})`, limit: "1" }, t) : Promise.resolve([]),
+      issns.length ? api.select("ref_sanlic", { issns: `ov.{${issns.join(",")}}`, limit: "1" }, t) : Promise.resolve([]),
+    ]);
+    const norm = normaliseTitle(title);
+    const crest = crestRows[0] || (norm ? (await api.select("ref_crest", { title_norm: `eq.${norm}`, limit: "1" }, t))[0] : null) || null;
+    const sanlic = sanlicRows[0] || (norm ? (await api.select("ref_sanlic", { title_norm: `eq.${norm}`, limit: "1" }, t))[0] : null) || null;
+    const report = quickReport(query, { scopus, scopusNote, scopusError, crest, sanlic, lists, issns, title });
+    state.view = { name: "quick", query, site, report, sid: issns[0] || null, listsLoaded: lists.length > 0 };
+  } catch (e) {
+    state.view = { name: "quick", query, site, error: e.message };
+  }
+  render();
+}
+
+// ---------------------------------------------------------- find journals
+function phoneProvider(api, t) {
+  const fn = (params) => api.request("GET", "/functions/v1/discover", { token: t, params });
+  const chunks = (arr, n) => Array.from({ length: Math.ceil(arr.length / n) }, (_, i) => arr.slice(i * n, i * n + n));
+  return {
+    openalex: (mode, q) => fn({ source: "openalex", mode, q }),
+    doaj: (mode, q) => fn({ source: "doaj", mode, q }),
+    scopus: (q) => fn({ source: "scopus", mode: "scope", q }),
+    async crestSearch(q) {
+      const words = normaliseTitle(q).split(" ").filter((w) => w.length > 1);
+      if (!words.length) return { results: [] };
+      const rows = await api.select("ref_crest", { and: `(${words.map((w) => `title_norm.ilike.*${w}*`).join(",")})`, limit: "50" }, t);
+      return { results: rows };
+    },
+    async refmatch(issns, titles) {
+      const crest = [], sanlic = [];
+      for (const part of chunks(issns, 40)) {
+        const list = `(${part.join(",")})`;
+        crest.push(...await api.select("ref_crest", { or: `(issn.in.${list},eissn.in.${list})` }, t));
+        sanlic.push(...await api.select("ref_sanlic", { issns: `ov.{${part.join(",")}}` }, t));
+      }
+      const names = titles.map(normaliseTitle).filter(Boolean);
+      for (const part of chunks(names, 20)) {
+        const list = `(${part.map((n) => `"${n}"`).join(",")})`;
+        crest.push(...await api.select("ref_crest", { title_norm: `in.${list}` }, t));
+        sanlic.push(...await api.select("ref_sanlic", { title_norm: `in.${list}` }, t));
+      }
+      const lists = await api.select("ref_lists", {}, t);
+      const errors = {};
+      for (const k of ["crest", "sanlic"]) if (!lists.some((l) => l.key === k)) errors[k] = "list not loaded yet";
+      return { crest, sanlic, errors };
+    },
+  };
+}
+
+async function findJournals(query, mode) {
+  state.view = { name: "discover", query, mode, loading: true };
+  render();
+  try {
+    const t = await token();
+    const result = await discover(mode, query, phoneProvider(sb(), t));
+    state.view = { name: "discover", query, mode, result, opts: { sort: "relevance", dhet: false, sanlic: false, oa: false } };
+  } catch (e) {
+    state.view = { name: "discover", query, mode, error: e.message };
+  }
+  render();
+}
+
+function discoverScreen(v) {
+  if (v.loading) return h("div", {}, backBar(), h("p", { class: "note" },
+    v.mode === "scope" ? `Finding journals that publish on “${v.query}”…` : `Finding journals with “${v.query}” in their titles…`));
+  if (v.error) return h("div", {}, backBar(), h("p", { class: "err" }, "Search failed: " + v.error));
+  return h("div", {}, backBar(), renderDiscover(v.result, (rec) => {
+    state.back = v;                       // ‹ Back returns to these results
+    quickSearch(rec.issns[0] || rec.title, "");
+  }, v.opts));
+}
+
+function fullReportFor(issns) {
+  if (!issns || !issns.length) return null;
+  return Object.values(state.reports).filter((r) => (r.issns || []).some((i) => issns.includes(i)))
+    .sort((a, b) => b.created_at - a.created_at)[0] || null;
+}
+
 // ---------------------------------------------------------------- screens
 function setupScreen() {
   const url = h("input", { type: "url", placeholder: "https://<project>.supabase.co", value: state.conf.url });
@@ -170,8 +291,9 @@ function signInScreen() {
 const TONES = { good: "good", warn: "warn", bad: "bad" };
 function miniChips(glance) {
   const pick = ["DHET subsidy", "Norwegian Register", "SANLiC APC agreement"];
-  const items = (glance || []).filter((g) => pick.includes(g.label) || g.label.startsWith("SJR"));
+  const items = (glance || []).filter((g) => pick.includes(g.label) || g.label.startsWith("CiteScore"));
   return h("div", { class: "mini" }, items.map((g) => h("span", { class: `tag ${TONES[g.tone] || "neutral"}` },
+    g.label.startsWith("CiteScore") ? "CiteScore " + g.value.replace(/^([\d.]+)(?: \((Q\d).*)?$/, (m, v, q) => q ? `${v} ${q}` : v) :
     g.label.startsWith("SJR") ? g.value.replace(/^.*\((Q\d)\).*$/, "$1") : g.label === "DHET subsidy" ? `DHET: ${g.value}` : g.value)));
 }
 
@@ -209,15 +331,31 @@ function homeScreen() {
   renderList();
   return h("div", {},
     h("header", { class: "bar" }, h("h1", {}, "Journal Scope"), h("button", { class: "link", onclick: () => confirm("Sign out? Reports stay on the PC and in Supabase.") && signOut() }, "Sign out")),
-    h("form", { class: "ask", onsubmit: (e) => { e.preventDefault(); requestLookup(q.value.trim(), site.value.trim()); } },
-      q, site, h("button", { class: "primary" }, "Check on my PC")),
+    h("form", { class: "ask", onsubmit: (e) => { e.preventDefault(); state.back = null; quickSearch(q.value.trim(), site.value.trim()); } },
+      q, site, h("button", { class: "primary" }, "Check journal")),
+    findForm(),
     reqs.length > 0 && h("ul", { class: "requests" }, reqs.map(requestRow)),
     filterBox, list,
     h("p", { class: "foot" }, state.error ? h("span", { class: "err" }, state.error) : state.lastSync ? `Synced ${timeFmt(state.lastSync)}` : "Syncing…"));
 }
 
+function findForm() {
+  const fq = h("input", { name: "fq", placeholder: "Find journals by keyword", required: true, minlength: "2", enterkeyhint: "search", autocapitalize: "off" });
+  const mode = h("select", { name: "fmode", class: "mode" },
+    h("option", { value: "title" }, "In titles (OpenAlex, DOAJ, CREST)"),
+    h("option", { value: "scope" }, "By scope: what they publish (OpenAlex, Scopus, DOAJ)"));
+  return h("form", { class: "ask find", onsubmit: (e) => { e.preventDefault(); findJournals(fq.value.trim(), mode.value); } },
+    fq, mode, h("button", { class: "secondary" }, "Find journals"));
+}
+
 function backBar(title) {
-  return h("header", { class: "bar" }, h("button", { class: "link back", onclick: () => { state.view = { name: "home" }; render(); } }, "‹ Back"), h("span", { class: "bar-title" }, title || ""));
+  const back = () => {
+    const prev = state.back;
+    state.back = null;
+    state.view = prev && state.view.name !== "discover" ? prev : { name: "home" };
+    render();
+  };
+  return h("header", { class: "bar" }, h("button", { class: "link back", onclick: back }, "‹ Back"), h("span", { class: "bar-title" }, title || ""));
 }
 
 function reportScreen(id) {
@@ -246,6 +384,23 @@ function candidatesScreen(rid) {
   }));
 }
 
+function quickScreen(v) {
+  if (v.loading) return h("div", {}, backBar(), h("p", { class: "note" }, `Searching for “${v.query}”…`));
+  if (v.error) return h("div", {}, backBar(), h("p", { class: "err" }, "Search failed: " + v.error),
+    h("button", { class: "primary wide", onclick: () => requestLookup(v.query, v.site) }, "Check on my PC instead"));
+  if (v.candidates) return h("div", {}, backBar(), renderCandidates(v.query, v.candidates, (c) => quickSearch(v.query, v.site, c.source_id)));
+  const full = fullReportFor(v.report.identity.issns);
+  return h("div", {}, backBar(),
+    !v.listsLoaded && h("p", { class: "err" }, "The phone lists haven't been loaded yet. On the PC: Settings → Phone sync…, then Settings → Refresh phone lists now."),
+    h("div", { class: "actions" },
+      full && h("button", { class: "secondary", onclick: () => { state.view = { name: "report", uid: full.uid }; render(); window.scrollTo(0, 0); } },
+        `Open full report (${dateFmt(full.created_at)})`),
+      h("button", { class: "secondary", onclick: () => requestLookup(v.query, v.site, v.sid) },
+        full ? "Refresh full report on my PC" : "Get full report from my PC")),
+    h("p", { class: "note" }, "Instant check from Scopus and the CREST and SANLiC lists. The full report adds Kanalregister and the journal's own statistics; your PC runs it when it is on."),
+    renderReport(v.report));
+}
+
 function render() {
   let screen;
   if (!state.conf.url || !state.conf.key) screen = setupScreen();
@@ -253,6 +408,8 @@ function render() {
   else if (state.view.name === "report") screen = reportScreen(state.view.uid);
   else if (state.view.name === "waiting") screen = waitingScreen(state.view.request);
   else if (state.view.name === "candidates") screen = candidatesScreen(state.view.request);
+  else if (state.view.name === "quick") screen = quickScreen(state.view);
+  else if (state.view.name === "discover") screen = discoverScreen(state.view);
   else screen = homeScreen();
   const focused = document.activeElement && document.activeElement.name;
   const typed = focused && document.activeElement.value;

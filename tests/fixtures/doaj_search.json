@@ -1,0 +1,74 @@
+{
+ "results": [
+  {
+   "bibjson": {
+    "title": "Informatics in Medicine Unlocked",
+    "eissn": "2352-9148",
+    "publisher": {
+     "name": "Elsevier",
+     "country": "GB"
+    },
+    "apc": {
+     "has_apc": true,
+     "max": [
+      {
+       "price": 2660,
+       "currency": "USD"
+      }
+     ]
+    },
+    "publication_time_weeks": 18,
+    "editorial": {
+     "review_process": [
+      "Single anonymous peer review"
+     ]
+    },
+    "ref": {
+     "journal": "https://www.sciencedirect.com/journal/informatics-in-medicine-unlocked"
+    },
+    "keywords": [
+     "informatics",
+     "bioinformatics"
+    ],
+    "subject": [
+     {
+      "term": "Computer applications to medicine. Medical informatics"
+     }
+    ]
+   }
+  },
+  {
+   "bibjson": {
+    "title": "Brain Informatics",
+    "pissn": "2198-4018",
+    "eissn": "2198-4026",
+    "publisher": {
+     "name": "SpringerOpen",
+     "country": "DE"
+    },
+    "apc": {
+     "has_apc": true,
+     "max": [
+      {
+       "price": 940,
+       "currency": "EUR"
+      },
+      {
+       "price": 1140,
+       "currency": "USD"
+      }
+     ]
+    },
+    "publication_time_weeks": 13,
+    "editorial": {
+     "review_process": [
+      "Single anonymous peer review"
+     ]
+    },
+    "ref": {
+     "journal": "https://www.springer.com/40708"
+    }
+   }
+  }
+ ]
+}

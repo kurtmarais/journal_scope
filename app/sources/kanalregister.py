@@ -14,7 +14,9 @@ from urllib.parse import parse_qs, quote_plus, urlparse
 
 from bs4 import BeautifulSoup
 
-from ..fetch import FetchError, Fetcher
+import json
+
+from ..fetch import CACHE_DIR, FetchError, Fetcher
 from ..util import clean_text, find_issns, normalise_title
 from . import ERROR, FOUND, NOT_FOUND, source_result
 
@@ -123,15 +125,36 @@ def parse_journal(html: str, url: str | None = None) -> dict:
     return data
 
 
+_ID_CACHE = CACHE_DIR / "kanalregister_ids.json"
+
+
+def _cached_id(issns: list[str]) -> str | None:
+    try:
+        known = json.loads(_ID_CACHE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return next((known[i] for i in issns if i in known), None)
+
+
+def _remember(issns: list[str], jid: str) -> None:
+    try:
+        known = json.loads(_ID_CACHE.read_text(encoding="utf-8")) if _ID_CACHE.exists() else {}
+        known.update({i: jid for i in issns})
+        _ID_CACHE.parent.mkdir(parents=True, exist_ok=True)
+        _ID_CACHE.write_text(json.dumps(known), encoding="utf-8")
+    except (OSError, ValueError):
+        pass
+
+
 async def lookup(fetcher: Fetcher, title: str | None, issns: list[str]) -> dict:
     terms = list(issns) or ([title] if title else [])
     if not terms:
         return source_result(NAME, NOT_FOUND, BASE, note="No ISSN or title to search with.")
     try:
-        jid = None
-        for term in terms:
+        jid = _cached_id(issns)   # known from an earlier lookup: skip the search page
+        for term in ([] if jid else terms):
             url = search_url(term)
-            html = await fetcher.render(url, wait_for='a[href*="tidsskrift?id="]', wait_ms=12000)
+            html = await fetcher.render(url, wait_for='a[href*="tidsskrift?id="]', wait_ms=8000)
             hits = parse_search(html)
             if hits and term in issns:
                 jid = hits[0]["id"]
@@ -141,8 +164,8 @@ async def lookup(fetcher: Fetcher, title: str | None, issns: list[str]) -> dict:
             if exact:
                 jid = exact[0]["id"]
                 break
-        if jid is None and title and issns:
-            html = await fetcher.render(search_url(title), wait_for='a[href*="tidsskrift?id="]', wait_ms=12000)
+        if jid is None and title and issns and not _cached_id(issns):
+            html = await fetcher.render(search_url(title), wait_for='a[href*="tidsskrift?id="]', wait_ms=8000)
             exact = [h for h in parse_search(html) if normalise_title(h["title"]) == normalise_title(title)]
             jid = exact[0]["id"] if exact else None
         if jid is None:
@@ -156,6 +179,7 @@ async def lookup(fetcher: Fetcher, title: str | None, issns: list[str]) -> dict:
         data["id"] = jid
         if not data.get("title"):
             return source_result(NAME, ERROR, url, error="Could not read the Kanalregister journal page.")
+        _remember(sorted(set(issns) | set(data.get("issns") or [])), jid)
         return source_result(NAME, FOUND, url, data)
     except FetchError as exc:
         return source_result(NAME, ERROR, search_url(terms[0]), error=str(exc))

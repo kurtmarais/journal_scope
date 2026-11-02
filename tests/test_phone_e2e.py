@@ -83,7 +83,8 @@ def test_phone_request_report_delete(tmp_path):
             await page.wait_for_selector("text=Reports from your PC appear here.")
 
             await page.fill("input[name=q]", "1532-0464")
-            await page.click("text=Check on my PC")
+            await page.click("button:has-text('Check journal')")
+            await page.click("button:has-text('Get full report from my PC')")
             await page.wait_for_selector("text=Waiting for your PC")
             pending = [r for r in fake.tables["journal_requests"].values() if r["status"] == "pending"]
             assert [r["query"] for r in pending] == ["1532-0464"]
@@ -111,6 +112,150 @@ def test_phone_request_report_delete(tmp_path):
             assert db.list_reports() == []
 
             assert not errors, errors
+            await browser.close()
+
+    try:
+        asyncio.run(run())
+    finally:
+        api.shutdown()
+        web.shutdown()
+
+
+def test_phone_searches_lists_without_pc(tmp_path):
+    from tests.reflist_samples import get_bytes_for
+
+    fake = FakeSupabase()
+    api, api_url = fake.serve()
+    web, web_url = serve_web(api_url)
+    # The PC loads the lists once (then may be switched off).
+    pc = SyncEngine(Database(tmp_path / "pc.db"), {}, lambda s: None, lambda *a: {}, opener=fake.opener,
+                    get_bytes=get_bytes_for(tmp_path), tmp_dir=tmp_path / "lists")
+    pc.sign_in(api_url, "sb_publishable_test", EMAIL, PASSWORD)
+    assert all(v.startswith("ok") for v in pc.cycle()["lists"].values())
+
+    async def run():
+        async with pw.async_playwright() as p:
+            browser = await p.chromium.launch(executable_path=CHROME, args=["--no-sandbox"])
+            ctx = await browser.new_context(viewport={"width": 393, "height": 852}, is_mobile=True, has_touch=True)
+            page = await ctx.new_page()
+            errors = []
+            page.on("console", lambda m: errors.append(m.text) if m.type == "error" else None)
+            page.on("pageerror", lambda e: errors.append(str(e)))
+            await page.goto(web_url)
+            await page.fill("input[type=email]", EMAIL)
+            await page.fill("input[type=password]", PASSWORD)
+            await page.click("button:has-text('Sign in')")
+            await page.wait_for_selector("text=Reports from your PC appear here.")
+
+            # ISSN search: instant, from the lists
+            await page.fill("input[name=q]", "1532-0480")
+            await page.click("button:has-text('Check journal')")
+            await page.wait_for_selector("h2:has-text('Journal of Biomedical Informatics')", timeout=10000)
+            for text in ("10.8 (Q1, 95th percentile)", "Eligible for subsidy", "Covered (Hybrid)", "Coverage 2001-2026"):
+                assert await page.is_visible(f"text={text}"), text
+            assert await page.is_visible("article:has(h3:has-text('Kanalregister')) >> text=Not checked")
+            if SHOTS:
+                await page.screenshot(path=f"{SHOTS}/phone_quick.png", full_page=True)
+            assert await page.evaluate("document.documentElement.scrollWidth") <= 393
+            assert not fake.tables["journal_requests"]          # nothing was sent to the PC
+
+            # Optional full report from the PC
+            await page.click("button:has-text('Get full report from my PC')")
+            await page.wait_for_selector("text=Waiting for your PC")
+            req = next(iter(fake.tables["journal_requests"].values()))
+            assert req["sid"] == "1532-0464"
+
+            # Title search with several matches -> choose
+            await page.click("text=‹ Back")
+            await page.fill("input[name=q]", "Journal of Biomedical")
+            await page.click("button:has-text('Check journal')")
+            await page.wait_for_selector("text=Several journals match")
+            await page.click(".candidates button:has-text('Journal of Biomedical Informatics: X')")
+            await page.wait_for_selector("text=Not in Scopus")
+            assert await page.is_visible(".tile.bad:has-text('Discontinued')")     # CREST list status
+            assert await page.is_visible("text=Not covered")
+
+            # Unknown journal
+            await page.click("text=‹ Back")
+            await page.fill("input[name=q]", "0000-0019")
+            await page.click("button:has-text('Check journal')")
+            await page.wait_for_selector("text=Not in Scopus")
+
+            assert not errors, errors
+            await browser.close()
+
+    try:
+        asyncio.run(run())
+    finally:
+        api.shutdown()
+        web.shutdown()
+
+
+def test_phone_find_journals(tmp_path):
+    from tests.reflist_samples import get_bytes_for
+
+    fake = FakeSupabase()
+    api, api_url = fake.serve()
+    web, web_url = serve_web(api_url)
+    pc = SyncEngine(Database(tmp_path / "pc.db"), {}, lambda s: None, lambda *a: {}, opener=fake.opener,
+                    get_bytes=get_bytes_for(tmp_path), tmp_dir=tmp_path / "lists")
+    pc.sign_in(api_url, "sb_publishable_test", EMAIL, PASSWORD)
+    pc.cycle()   # loads the CREST and SANLiC lists
+
+    async def run():
+        async with pw.async_playwright() as p:
+            browser = await p.chromium.launch(executable_path=CHROME, args=["--no-sandbox"])
+            ctx = await browser.new_context(viewport={"width": 393, "height": 852}, is_mobile=True, has_touch=True)
+            page = await ctx.new_page()
+            errors = []
+            page.on("console", lambda m: errors.append(m.text) if m.type == "error" else None)
+            page.on("pageerror", lambda e: errors.append(str(e)))
+            await page.goto(web_url)
+            await page.fill("input[type=email]", EMAIL)
+            await page.fill("input[type=password]", PASSWORD)
+            await page.click("button:has-text('Sign in')")
+            await page.wait_for_selector("text=Reports from your PC appear here.")
+
+            # Titles mode: OpenAlex + DOAJ + CREST, with DHET/SANLiC status on each
+            await page.fill("input[name=fq]", "informatics")
+            await page.click("button:has-text('Find journals')")
+            await page.wait_for_selector(".d-item")
+            jbi = page.locator(".d-item", has_text="Journal of Biomedical Informatics").first
+            assert "DHET eligible" in await jbi.inner_text()
+            assert "SANLiC covered (Hybrid)" in await jbi.inner_text()
+            ieee = page.locator(".d-item", has_text="IEEE Journal of Biomedical and Health Informatics")
+            assert "Not on DHET list" in await ieee.inner_text()
+            brain = page.locator(".d-item", has_text="Brain Informatics")
+            assert "OA · USD 1,140" in await brain.inner_text() and "13 weeks to publication" in await brain.inner_text()
+            disc = page.locator(".d-item", has_text="Informatics: X")
+            assert "DHET: Discontinued" in await disc.inner_text()           # found through the CREST list
+            if SHOTS:
+                await page.screenshot(path=f"{SHOTS}/phone_find_title.png", full_page=True)
+            await page.check("label.check:has-text('DHET eligible') input")
+            assert await page.locator(".d-item").count() == 1
+            assert await page.evaluate("document.documentElement.scrollWidth") <= 393
+
+            # Open a result -> instant report; Back returns to the results
+            await page.click(".d-item")
+            await page.wait_for_selector("h2:has-text('Journal of Biomedical Informatics')")
+            await page.click("text=‹ Back")
+            await page.wait_for_selector(".d-item")
+
+            # Scope mode: ranked by matching papers; Scopus unavailable is reported, not fatal
+            await page.click("text=‹ Back")
+            await page.fill("input[name=fq]", "clinical decision support")
+            await page.select_option("select[name=fmode]", "scope")
+            await page.click("button:has-text('Find journals')")
+            await page.wait_for_selector(".d-item")
+            first = await page.locator(".d-item").first.inner_text()
+            assert "Journal of Biomedical Informatics" in first and "320 matching papers (OpenAlex)" in first
+            assert await page.is_visible("text=Not available this time: Scopus")
+            if SHOTS:
+                await page.screenshot(path=f"{SHOTS}/phone_find_scope.png", full_page=True)
+            modes = [c["mode"] for c in fake.discover_calls]
+            assert "title" in modes and "scope" in modes
+
+            assert not [e for e in errors if "502" not in e], errors
             await browser.close()
 
     try:

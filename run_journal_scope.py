@@ -42,6 +42,7 @@ def _note_process_start() -> None:
 
 
 if __name__ == "__main__":
+    os.environ["JOURNAL_SCOPE_T0"] = str(time.time())   # start-up timing in launch.log
     _note_process_start()
     try:
         from desktop.app import main

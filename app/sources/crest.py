@@ -12,7 +12,7 @@ from bs4 import BeautifulSoup
 
 from ..fetch import FetchError, Fetcher
 from ..util import clean_text, normalise_issn, normalise_title
-from . import ERROR, FOUND, NOT_FOUND, source_result
+from . import ERROR, FOUND, NOT_FOUND, SKIPPED, source_result
 
 NAME = "CREST (DHET subsidy list)"
 HOME = "https://db.crest.sun.ac.za/zapublications/"
@@ -67,7 +67,7 @@ def match(rows: list[dict], issns: list[str], title: str | None) -> dict | None:
 
 async def lookup(fetcher: Fetcher, title: str | None, issns: list[str]) -> dict:
     if not title:
-        return source_result(NAME, NOT_FOUND, HOME, note="CREST can only be searched by journal title; no title was available.")
+        return source_result(NAME, SKIPPED, HOME, note="CREST can only be searched by journal title, and no title was found for this ISSN.")
     url = search_url(title)
     try:
         html = await fetcher.get_text(url, headers={"X-Requested-With": "XMLHttpRequest"})

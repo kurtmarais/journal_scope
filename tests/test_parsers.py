@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 from openpyxl import Workbook
 
-from app.sources import crest, journal_site, kanalregister, sanlic, scimago
+from app.sources import crest, journal_site, kanalregister, sanlic, scopus
 from app.util import find_issns, looks_like_issn, normalise_issn, normalise_title
 
 FIX = Path(__file__).parent / "fixtures"
@@ -23,41 +23,39 @@ def test_issn_helpers():
     assert normalise_title("Journal of Biomedical Informatics: X") == "journal of biomedical informatics x"
 
 
-# ---------------------------------------------------------------- SCImago
-def test_scimago_search():
-    hits = scimago.parse_search(read("scimago_search.html"))
-    assert hits == [{
-        "source_id": "23706",
-        "title": "Journal of Biomedical Informatics",
-        "country": "United States",
-        "publisher": "Academic Press Inc.",
-        "url": scimago.detail_url("23706"),
-    }]
-
-
-def test_scimago_detail():
-    d = scimago.parse_detail(read("scimago_detail.html"))
-    assert d["title"] == "Journal of Biomedical Informatics"
-    assert d["country"] == "United States"
-    assert d["publisher"] == "Academic Press Inc."
-    assert d["sjr"] == {"year": 2025, "value": 1.32, "best_quartile": "Q1"}
-    assert d["h_index"] == 145
+# ---------------------------------------------------------------- Scopus
+def test_scopus_entry():
+    import json
+    e = scopus.entries(json.loads(read("scopus_issn.json")))[0]
+    d = scopus.parse_entry(e)
+    assert d["title"] == "Journal of Biomedical Informatics" and d["source_id"] == "23706"
     assert d["issns"] == ["1532-0464", "1532-0480"]
+    assert d["citescore"] == {"year": 2025, "value": 10.8}
+    assert d["citescore_tracker"] == {"year": 2026, "value": 9.6}
+    assert d["subject_ranks"][0] == {"subject": "Computer Science Applications", "code": "1706", "year": 2025,
+                                     "rank": "40", "percentile": 95.0, "quartile": "Q1"}
+    assert d["subject_ranks"][1]["quartile"] == "Q1" and d["best_quartile"] == "Q1" and d["best_percentile"] == 95.0
+    assert d["sjr"] == {"year": 2025, "value": 1.32}
     assert d["coverage"] == "2001-2026" and d["coverage_last_year"] == 2026
     assert d["homepage"] == "https://www.journals.elsevier.com/journal-of-biomedical-informatics"
-    assert {"category": "Health Informatics", "year": 2025, "quartile": "Q1"} in d["category_quartiles"]
-    assert d["cites_per_doc_2y"][-1] == {"year": 2025, "value": 6.551}
-    assert d["similar_journals"][0]["title"] == "JMIR Medical Informatics"
-    assert d["similar_journals"][0]["similarity"] == "66%"
-    assert d["similar_journals"][0]["open_access"] is True
-    assert [a["area"] for a in d["subject_areas"]] == ["Computer Science", "Medicine"]
+    assert d["ranks_unavailable"] is False
 
 
-def test_scimago_choose():
-    c = [{"title": "Nature"}, {"title": "Nature Communications"}]
-    assert scimago.choose(c, "nature", None) == {"title": "Nature"}
-    assert scimago.choose(c, "Nat", None) is None
-    assert scimago.choose(c, "x", "1234-5678") == {"title": "Nature"}
+def test_scopus_quartiles_and_basic_view():
+    assert [scopus.quartile(p) for p in (99, 75, 74.9, 50, 25, 24, None)] == ["Q1", "Q1", "Q2", "Q2", "Q3", "Q4", None]
+    basic = {"dc:title": "T", "prism:issn": "1234-5679",
+             "citeScoreYearInfoList": {"citeScoreCurrentMetric": "3.1", "citeScoreCurrentMetricYear": "2025"}}
+    d = scopus.parse_entry(basic, limited=True)
+    assert d["citescore"] == {"year": 2025, "value": 3.1} and d["subject_ranks"] == [] and d["ranks_unavailable"] is True
+
+
+def test_scopus_search_candidates():
+    import json
+    cands = scopus.candidates_from(scopus.entries(json.loads(read("scopus_search.json"))))
+    assert [c["source_id"] for c in cands] == ["1532-0464", "2168-2194", "2590-177X"]
+    assert scopus.choose(cands, "Journal of Biomedical Informatics")["source_id"] == "1532-0464"
+    assert scopus.choose(cands, "Biomedical") is None
+    assert scopus.entries({"serial-metadata-response": {"entry": [{"error": "Result set was empty"}]}}) == []
 
 
 # ---------------------------------------------------------------- CREST
@@ -164,3 +162,24 @@ def test_candidate_urls():
     assert journal_site.candidate_urls("https://www.tandfonline.com/toc/tjis20/current")[0] == \
         "https://www.tandfonline.com/journals/tjis20/about-this-journal"
     assert journal_site.candidate_urls("https://example.org/j") == ["https://example.org/j"]
+
+
+def test_more_publisher_wordings():
+    html = """<main>
+      <div><span>13 days avg</span> <span>from submission to first decision</span></div>
+      <div><span>81 days avg</span> <span>from submission to first post-review decision</span></div>
+      <div><span>21 days avg</span> <span>from acceptance to online publication</span></div>
+      <div><span>13%</span> <span>acceptance rate</span></div>
+      <dl><div><dt>Submission to acceptance (median days)</dt><dd>142</dd></div></dl>
+    </main>"""
+    m = journal_site.extract_metrics(html, "u")
+    assert m["first_decision"]["value"] == "13 days"
+    assert m["decision_after_review"]["value"] == "81 days"
+    assert m["acceptance_to_publication"]["value"] == "21 days"
+    assert m["acceptance_rate"]["value"] == "13%"
+    assert m["submission_to_acceptance"]["value"] == "142"
+
+
+def test_candidates_follow_springer_link_for_bmc():
+    assert journal_site.candidate_urls("https://link.springer.com/journal/12911/aims-and-scope") == \
+        ["https://link.springer.com/journal/12911"]

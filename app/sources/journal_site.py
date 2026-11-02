@@ -37,16 +37,21 @@ METRICS: dict[str, tuple[str, list[tuple[str, str]]]] = {
         (r"(?<!5-year )(?<!five-year )\bimpact factor\b", DECIMAL),
     ]),
     "first_decision": ("Submission to first decision", [
+        (r"submission to first (?:editorial )?decision \((?:median )?days\)", BARE_INT),
         (r"submission to first (?:editorial )?decision", DAYS),
-        (r"time to first decision", DAYS),
+        (r"(?:time|days) to first (?:editorial )?decision", DAYS),
+        (r"first decision time", DAYS),
         (r"\bfirst decision\b", DAYS),
     ]),
     "decision_after_review": ("Submission to decision after review", [
+        (r"submission to (?:first )?post-review decision", DAYS),
         (r"submission to decision after review", DAYS),
         (r"decision after (?:peer )?review", DAYS),
+        (r"(?:peer )?review time", DAYS),
     ]),
     "submission_to_acceptance": ("Submission to acceptance", [
         (r"median days from submission to acceptance", BARE_INT),
+        (r"submission to acceptance \((?:median )?days\)", BARE_INT),
         (r"submission to acceptance", DAYS),
         (r"time to acceptance", DAYS),
     ]),
@@ -54,7 +59,7 @@ METRICS: dict[str, tuple[str, list[tuple[str, str]]]] = {
         (r"acceptance to (?:online |final )?publication", DAYS),
     ]),
     "acceptance_rate": ("Acceptance rate", [
-        (r"acceptance rate", PERCENT),
+        (r"(?:article )?acceptance rate", PERCENT),
     ]),
     "apc": ("Article processing charge (APC)", [
         (r"article (?:publishing|processing) charges?", MONEY),
@@ -99,7 +104,7 @@ def candidate_urls(homepage: str) -> list[str]:
         j = seg[seg.index("journals") + 1]
         return [f"https://www.frontiersin.org/journals/{j}",
                 f"https://www.frontiersin.org/journals/{j}/for-authors/publishing-fees"]
-    if host.endswith("biomedcentral.com") or host.endswith("springeropen.com"):
+    if host.endswith("biomedcentral.com"):
         base = f"{u.scheme}://{u.netloc}"
         return [base, f"{base}/about", f"{base}/submission-guidelines/fees-and-funding"]
     if "onlinelibrary.wiley.com" in host:
@@ -178,7 +183,11 @@ async def lookup(fetcher: Fetcher, homepage: str | None) -> dict:
             note="No journal homepage was found in SCImago or Kanalregister. Enter the journal URL to check it.",
         )
     pages, errors, metrics = [], [], {}
-    for url in candidate_urls(homepage):
+    # Many homepages redirect (old Elsevier addresses -> ScienceDirect, BMC -> Springer Nature Link):
+    # pick the statistics pages from where the homepage actually lands.
+    resolve = getattr(fetcher, "resolve", None)
+    landed = await resolve(homepage) if resolve else homepage
+    for url in candidate_urls(landed):
         try:
             html, method = await fetcher.page_html(url)
             got = extract_metrics(html, url)

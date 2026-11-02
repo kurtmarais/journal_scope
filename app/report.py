@@ -5,47 +5,49 @@ from __future__ import annotations
 import asyncio
 from datetime import date
 
+import time
+
 from .fetch import Fetcher
-from .sources import FOUND, crest, journal_site, kanalregister, sanlic, scimago
+from .sources import ERROR, FOUND, crest, journal_site, kanalregister, sanlic, scopus, source_result
 from .util import looks_like_issn, normalise_issn
 
 
 def _glance(report: dict) -> list[dict]:
     """Headline values, each taken straight from one source."""
-    s = report["sources"]
+    working = {"status": "working", "data": {}}
+    s = {k: report["sources"].get(k) or working for k in ("scopus", "crest", "kanalregister", "sanlic", "journal_site")}
     out: list[dict] = []
 
-    sj = s["scimago"]
-    if sj["status"] == FOUND:
-        d = sj["data"]
-        last = d.get("coverage_last_year")
-        current = last is not None and last >= date.today().year - 1
+    sc = s["scopus"]
+    if sc["status"] == FOUND:
+        d = sc["data"]
+        last = d.get("coverage_last_year") or (d.get("citescore") or {}).get("year")
+        current = last is not None and last >= date.today().year - 2
         out.append({
-            "label": "Indexed (Scopus via SCImago)",
-            "value": f"Coverage {d.get('coverage')}" if d.get("coverage") else "Listed",
+            "label": "Indexed in Scopus",
+            "value": f"Coverage {d['coverage']}" if d.get("coverage") else "Listed",
             "tone": "good" if current else "warn",
-            "source": "scimago",
+            "source": "scopus",
         })
-        if d.get("sjr"):
-            q = d["sjr"].get("best_quartile")
+        cs = d.get("citescore")
+        if cs and cs.get("value") is not None:
+            q, pct = d.get("best_quartile"), d.get("best_percentile")
+            extra = f" ({q}, {pct:.0f}th percentile)" if q and pct is not None else ""
             out.append({
-                "label": f"SJR {d['sjr']['year']}",
-                "value": f"{d['sjr']['value']:.3f}" + (f" ({q})" if q else "") if d["sjr"].get("value") is not None else (q or "-"),
+                "label": f"CiteScore {cs['year']}" if cs.get("year") else "CiteScore",
+                "value": f"{cs['value']:.1f}{extra}",
                 "tone": {"Q1": "good", "Q2": "good", "Q3": "warn", "Q4": "bad"}.get(q, "neutral"),
-                "source": "scimago",
+                "source": "scopus",
             })
-        if d.get("cites_per_doc_2y"):
-            last_c = d["cites_per_doc_2y"][-1]
-            out.append({"label": f"Cites/doc, 2 years ({last_c['year']})", "value": f"{last_c['value']:.2f}", "tone": "neutral", "source": "scimago"})
-        if d.get("h_index") is not None:
-            out.append({"label": "H-index", "value": str(d["h_index"]), "tone": "neutral", "source": "scimago"})
-    elif sj["status"] != "error" and not report.get("candidates"):
-        out.append({"label": "Indexed (Scopus via SCImago)", "value": "Not found", "tone": "bad", "source": "scimago"})
+        if d.get("sjr"):
+            out.append({"label": f"SJR {d['sjr']['year']}", "value": f"{d['sjr']['value']:.3f}", "tone": "neutral", "source": "scopus"})
+    elif sc["status"] == "not_found" and not report.get("candidates"):
+        out.append({"label": "Indexed in Scopus", "value": "Not found", "tone": "bad", "source": "scopus"})
 
     c = s["crest"]
     if c["status"] == FOUND:
         out.append({"label": "DHET subsidy", "value": c["data"]["status"], "tone": "good" if c["data"]["eligible"] else "bad", "source": "crest"})
-    elif c["status"] != "error":
+    elif c["status"] == "not_found":
         out.append({"label": "DHET subsidy", "value": "Not on approved list", "tone": "bad", "source": "crest"})
 
     k = s["kanalregister"]
@@ -58,7 +60,7 @@ def _glance(report: dict) -> list[dict]:
         if k["data"].get("ceased"):
             value += f" (ceased {k['data']['ceased']})"
         out.append({"label": "Norwegian Register", "value": value, "tone": tone, "source": "kanalregister"})
-    elif k["status"] != "error":
+    elif k["status"] == "not_found":
         out.append({"label": "Norwegian Register", "value": "Not listed", "tone": "warn", "source": "kanalregister"})
 
     n = s["sanlic"]
@@ -66,7 +68,7 @@ def _glance(report: dict) -> list[dict]:
         d = n["data"]
         value = ("Covered" if d["included"] else "Not covered") + (f" ({d['oa_type']})" if d.get("oa_type") else "")
         out.append({"label": "SANLiC APC agreement", "value": value, "tone": "good" if d["included"] else "warn", "source": "sanlic"})
-    elif n["status"] != "error":
+    elif n["status"] == "not_found":
         out.append({"label": "SANLiC APC agreement", "value": "Not covered", "tone": "warn", "source": "sanlic"})
 
     j = s["journal_site"]
@@ -77,17 +79,61 @@ def _glance(report: dict) -> list[dict]:
     return out
 
 
+# Longest wait per source before it is reported as not answering (seconds).
+LIMITS = {"scopus": 30, "crest": 30, "sanlic": 90, "kanalregister": 60, "journal_site": 75}
+NAMES = {"scopus": scopus.NAME, "crest": crest.NAME, "sanlic": sanlic.NAME,
+         "kanalregister": kanalregister.NAME, "journal_site": journal_site.NAME}
+
+
+async def _timed(key: str, coro, timings: dict, progress):
+    """Run one source with a time limit, recording how long it took."""
+    start = time.monotonic()
+    progress(key, "working", None)
+    try:
+        result = await asyncio.wait_for(coro, LIMITS[key])
+    except asyncio.TimeoutError:
+        result = source_result(NAMES[key], ERROR, error=f"No answer within {LIMITS[key]} seconds; try again later.")
+    timings[key] = round(time.monotonic() - start, 1)
+    res = result[0] if isinstance(result, tuple) else result
+    progress(key, res["status"], res)
+    return result
+
+
+def partial_report(query: str, results: dict) -> dict:
+    """A report from the sources finished so far; the rest show as 'checking'."""
+    sources = {k: results.get(k) or {"source": NAMES[k], "status": "working", "data": {}} for k in NAMES}
+    sd = sources["scopus"]["data"] if sources["scopus"]["status"] == FOUND else {}
+    kd = sources["kanalregister"]["data"] if sources["kanalregister"]["status"] == FOUND else {}
+    report = {"query": query, "candidates": [], "partial": True, "sources": sources,
+              "identity": {"title": sd.get("title") or kd.get("title") or query,
+                           "issns": sd.get("issns") or kd.get("issns") or [],
+                           "publisher": sd.get("publisher") or kd.get("publisher"), "country": kd.get("country"),
+                           "homepage": sd.get("homepage") or kd.get("homepage")}}
+    report["glance"] = _glance(report)
+    return report
+
+
 async def build_report(
     fetcher: Fetcher,
     query: str,
     source_id: str | None = None,
     site_url: str | None = None,
+    scopus_key: str | None = None,
+    scopus_token: str | None = None,
+    progress=lambda key, state, result=None: None,
 ) -> dict:
     query = (query or "").strip()
     issn = normalise_issn(query) if looks_like_issn(query) else None
+    timings: dict[str, float] = {}
+    # With an ISSN, Kanalregister (the slowest source) can start straight away, alongside Scopus.
+    early_kanal = (asyncio.ensure_future(_timed("kanalregister", kanalregister.lookup(fetcher, None, [issn]), timings, progress))
+                   if issn and not source_id else None)
+    await asyncio.sleep(0)   # let it start before Scopus
 
-    sj, candidates = await scimago.lookup(fetcher, query, issn, source_id)
-    report: dict = {"query": query, "candidates": candidates, "sources": {"scimago": sj}}
+    res = await _timed("scopus", scopus.lookup(fetcher, query, issn, source_id, key=scopus_key, token=scopus_token),
+                       timings, progress)
+    sj, candidates = res if isinstance(res, tuple) else (res, [])
+    report: dict = {"query": query, "candidates": candidates, "sources": {"scopus": sj}, "timings": timings}
 
     sjd = sj["data"] if sj["status"] == FOUND else {}
     title = sjd.get("title") or (None if issn else query or None)
@@ -96,6 +142,8 @@ async def build_report(
         issns.insert(0, issn)
 
     if candidates:  # ambiguous title: let the user choose before querying the rest
+        if early_kanal:
+            early_kanal.cancel()
         for key in ("crest", "kanalregister", "sanlic", "journal_site"):
             report["sources"][key] = {"source": key, "status": "skipped", "data": {}, "note": "Choose a journal first."}
         report["identity"] = {"title": None, "issns": [], "publisher": None}
@@ -109,17 +157,22 @@ async def build_report(
         if not url:
             k = await kanal_task
             url = k["data"].get("homepage") if k["status"] == FOUND else None
-        return await journal_site.lookup(fetcher, url)
+        return await _timed("journal_site", journal_site.lookup(fetcher, url), timings, progress)
 
-    kanal_task = asyncio.ensure_future(kanalregister.lookup(fetcher, title, issns))
+    kanal_task = early_kanal or asyncio.ensure_future(
+        _timed("kanalregister", kanalregister.lookup(fetcher, title, issns), timings, progress))
+    if not title:   # CREST searches by title only: get it from Kanalregister first
+        k = await kanal_task
+        if k["status"] == FOUND and k["data"].get("title"):
+            title = k["data"]["title"]
     crest_r, sanlic_r, site_r = await asyncio.gather(
-        crest.lookup(fetcher, title, issns),
-        sanlic.lookup(fetcher, title, issns),
+        _timed("crest", crest.lookup(fetcher, title, issns), timings, progress),
+        _timed("sanlic", sanlic.lookup(fetcher, title, issns), timings, progress),
         site_after_kanal(kanal_task),
     )
     kanal_r = await kanal_task
 
-    # Fill identity gaps from Kanalregister when SCImago has nothing.
+    # Fill identity gaps from Kanalregister when Scopus has nothing.
     kd = kanal_r["data"] if kanal_r["status"] == FOUND else {}
     if not title and kd.get("title"):
         title = kd["title"]

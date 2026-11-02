@@ -1,0 +1,73 @@
+{
+ "sources": [
+  {
+   "id": "https://openalex.org/S4210203445",
+   "display_name": "Journal of Biomedical Informatics",
+   "issn_l": "1532-0464",
+   "issn": [
+    "1532-0464",
+    "1532-0480"
+   ],
+   "host_organization_name": "Elsevier BV",
+   "works_count": 4500,
+   "summary_stats": {
+    "2yr_mean_citedness": 5.4,
+    "h_index": 145
+   },
+   "is_oa": false,
+   "is_in_doaj": false,
+   "apc_usd": 3550,
+   "homepage_url": "https://www.journals.elsevier.com/journal-of-biomedical-informatics",
+   "country_code": "US",
+   "type": "journal",
+   "relevance_score": 900.0
+  },
+  {
+   "id": "https://openalex.org/S2495854775",
+   "display_name": "IEEE Journal of Biomedical and Health Informatics",
+   "issn_l": "2168-2194",
+   "issn": [
+    "2168-2194",
+    "2168-2208"
+   ],
+   "host_organization_name": "Institute of Electrical and Electronics Engineers",
+   "works_count": 6870,
+   "summary_stats": {
+    "2yr_mean_citedness": 6.133785230110596,
+    "h_index": 167,
+    "i10_index": 3549
+   },
+   "is_oa": false,
+   "is_in_doaj": false,
+   "apc_usd": 2645,
+   "homepage_url": "http://ieeexplore.ieee.org/xpl/RecentIssue.jsp?punumber=6221020",
+   "country_code": "US",
+   "type": "journal",
+   "relevance_score": 21336.094
+  },
+  {
+   "id": "https://openalex.org/S201800618",
+   "display_name": "Health Informatics Journal",
+   "issn_l": "1355-4743",
+   "issn": [
+    "1355-4743",
+    "1460-4582",
+    "1741-2811"
+   ],
+   "host_organization_name": "SAGE Publishing",
+   "works_count": 1760,
+   "summary_stats": {
+    "2yr_mean_citedness": 3.2969283276450514,
+    "h_index": 78,
+    "i10_index": 769
+   },
+   "is_oa": true,
+   "is_in_doaj": true,
+   "apc_usd": 2000,
+   "homepage_url": "http://jhi.sagepub.com/",
+   "country_code": "GB",
+   "type": "journal",
+   "relevance_score": 12253.939
+  }
+ ]
+}

@@ -53,6 +53,10 @@ class SyncController(QObject):
                 if result["downloaded"] or result["looked_up"]:
                     self.reports_changed.emit()
                 note = f" ({result['looked_up']} phone lookup{'s' if result['looked_up'] != 1 else ''})" if result["looked_up"] else ""
+                lists = result.get("lists")
+                if lists:
+                    failed = [k for k, v in lists.items() if not v.startswith("ok")]
+                    note += f"; phone lists: {'reloaded' if not failed else 'failed for ' + ', '.join(failed)}"
                 self._set(f"Synced {time.strftime('%H:%M')}{note}")
             except AuthError as exc:
                 self._set(f"Phone sync: sign in again ({exc})")
