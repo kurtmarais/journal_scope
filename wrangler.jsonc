@@ -1,0 +1,11 @@
+// Cloudflare Workers deployment for the phone app: serves the static files in
+// web/ (no server code). Used when the repo is connected via Workers & Pages ->
+// Create -> Import a repository. Deploy command: npx wrangler deploy
+{
+  "name": "journal-scope-phone",
+  "compatibility_date": "2025-10-01",
+  "assets": {
+    "directory": "./web",
+    "not_found_handling": "single-page-application"
+  }
+}
