@@ -1,0 +1,268 @@
+// Journal Scope phone app.
+// Reads reports your PC has produced (synced through your Supabase project) and
+// queues new lookups, which the PC runs the next time it syncs.
+import { SUPABASE_KEY, SUPABASE_URL } from "./config.js";
+import { h, renderCandidates, renderReport } from "./report-view.js";
+import { AuthError, Supabase, SyncError } from "./supabase.js";
+
+const root = document.getElementById("root");
+const LS = {
+  get: (k, d = null) => { try { const v = localStorage.getItem("js." + k); return v === null ? d : JSON.parse(v); } catch { return d; } },
+  set: (k, v) => { try { localStorage.setItem("js." + k, JSON.stringify(v)); } catch { /* storage full or blocked */ } },
+  del: (k) => { try { localStorage.removeItem("js." + k); } catch { /* ignore */ } },
+};
+
+const state = {
+  conf: { url: SUPABASE_URL || LS.get("url", ""), key: SUPABASE_KEY || LS.get("key", "") },
+  session: LS.get("session"),
+  reports: LS.get("reports", {}),     // uid -> row (without deleted ones)
+  requests: LS.get("requests", {}),   // uid -> row
+  cursors: LS.get("cursors", {}),
+  view: { name: "home" },
+  filter: "",
+  syncing: false,
+  lastSync: null,
+  error: "",
+};
+
+const sb = () => new Supabase(state.conf.url, state.conf.key);
+const uid = () => (crypto.randomUUID ? crypto.randomUUID().replace(/-/g, "") : Date.now().toString(16) + Math.random().toString(16).slice(2));
+const now = () => Date.now() / 1000;
+const dateFmt = (t) => new Date(t * 1000).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
+const timeFmt = (d) => d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+
+function save() {
+  LS.set("reports", state.reports);
+  LS.set("requests", state.requests);
+  LS.set("cursors", state.cursors);
+}
+
+// ------------------------------------------------------------------ auth
+async function token() {
+  const s = state.session;
+  if (!s) throw new AuthError("Not signed in");
+  if (s.expires_at - now() > 120) return s.access_token;
+  state.session = await sb().refresh(s.refresh_token);
+  LS.set("session", state.session);
+  return state.session.access_token;
+}
+
+function signOut() {
+  for (const k of ["session", "reports", "requests", "cursors"]) LS.del(k);
+  Object.assign(state, { session: null, reports: {}, requests: {}, cursors: {}, view: { name: "home" } });
+  render();
+}
+
+// ------------------------------------------------------------------ sync
+async function sync() {
+  if (state.syncing || !state.session) return;
+  state.syncing = true;
+  try {
+    const t = await token();
+    for (const table of ["journal_reports", "journal_requests"]) {
+      const rows = await sb().changesSince(table, state.cursors[table] || "", t);
+      const store = table === "journal_reports" ? state.reports : state.requests;
+      for (const row of rows) {
+        if (row.deleted) delete store[row.uid];
+        else if (!store[row.uid] || store[row.uid].updated_at <= row.updated_at) store[row.uid] = row;
+        state.cursors[table] = row.server_updated_at;
+      }
+    }
+    // A finished lookup: its report is now in the list, so the request can go.
+    for (const r of Object.values(state.requests)) {
+      if (r.status === "done" && r.report_uid && state.reports[r.report_uid]) {
+        await sb().patch("journal_requests", r.uid, { deleted: true }, t);
+        delete state.requests[r.uid];
+        if (state.view.name === "waiting" && state.view.request === r.uid) state.view = { name: "report", uid: r.report_uid };
+      }
+    }
+    save();
+    state.error = "";
+    state.lastSync = new Date();
+  } catch (e) {
+    if (e instanceof AuthError) { state.error = "Signed out: " + e.message; state.session = null; LS.del("session"); }
+    else state.error = e instanceof SyncError ? e.message : String(e);
+  } finally {
+    state.syncing = false;
+    render();
+    schedule();
+  }
+}
+
+let timer = null;
+function schedule() {
+  clearTimeout(timer);
+  const busy = Object.values(state.requests).some((r) => r.status === "pending" || r.status === "running");
+  if (document.visibilityState === "visible" && state.session) timer = setTimeout(sync, busy ? 6000 : 60000);
+}
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") sync(); else clearTimeout(timer); });
+
+async function requestLookup(query, site, sid = null) {
+  const row = { uid: uid(), query, site: site || null, sid, status: "pending", created_at: now(), updated_at: now() };
+  try {
+    await sb().insert("journal_requests", row, await token());
+    state.requests[row.uid] = row;
+    save();
+    state.view = { name: "waiting", request: row.uid };
+  } catch (e) {
+    state.error = "Could not send the request: " + e.message;
+  }
+  render();
+  sync();
+}
+
+async function dismissRequest(r) {
+  delete state.requests[r.uid];
+  save();
+  render();
+  try { await sb().patch("journal_requests", r.uid, { deleted: true }, await token()); } catch { /* retried on next delete */ }
+}
+
+async function deleteReport(id) {
+  if (!confirm("Delete this report? It is removed from the PC as well.")) return;
+  try {
+    await sb().patch("journal_reports", id, { deleted: true, report: {} }, await token());
+    delete state.reports[id];
+    save();
+    state.view = { name: "home" };
+  } catch (e) {
+    state.error = "Could not delete: " + e.message;
+  }
+  render();
+}
+
+// ---------------------------------------------------------------- screens
+function setupScreen() {
+  const url = h("input", { type: "url", placeholder: "https://<project>.supabase.co", value: state.conf.url });
+  const key = h("input", { placeholder: "sb_publishable_…", value: state.conf.key });
+  return h("div", { class: "narrow" },
+    h("h1", {}, "Journal Scope"),
+    h("p", { class: "note" }, "Enter your Supabase project URL and publishable key (Project Settings → API Keys)."),
+    h("form", { onsubmit: (e) => {
+      e.preventDefault();
+      state.conf = { url: url.value.trim(), key: key.value.trim() };
+      LS.set("url", state.conf.url); LS.set("key", state.conf.key);
+      render();
+    } }, h("label", {}, "Project URL", url), h("label", {}, "Publishable key", key), h("button", { class: "primary" }, "Continue")));
+}
+
+function signInScreen() {
+  const email = h("input", { type: "email", autocomplete: "username", required: true });
+  const pw = h("input", { type: "password", autocomplete: "current-password", required: true });
+  const msg = h("p", { class: "err" }, state.error);
+  return h("div", { class: "narrow" },
+    h("h1", {}, "Journal Scope"),
+    h("p", { class: "note" }, "Sign in with the account you use for phone sync on the PC."),
+    h("form", { onsubmit: async (e) => {
+      e.preventDefault();
+      msg.textContent = "Signing in…";
+      try {
+        state.session = await sb().signIn(email.value.trim(), pw.value);
+        LS.set("session", state.session);
+        state.error = "";
+        render();
+        sync();
+      } catch (err) { msg.textContent = err.message; }
+    } }, h("label", {}, "Email", email), h("label", {}, "Password", pw), h("button", { class: "primary" }, "Sign in"), msg),
+    !SUPABASE_URL && h("button", { class: "link", onclick: () => { state.conf = { url: "", key: "" }; LS.del("url"); LS.del("key"); render(); } }, "Change project"));
+}
+
+const TONES = { good: "good", warn: "warn", bad: "bad" };
+function miniChips(glance) {
+  const pick = ["DHET subsidy", "Norwegian Register", "SANLiC APC agreement"];
+  const items = (glance || []).filter((g) => pick.includes(g.label) || g.label.startsWith("SJR"));
+  return h("div", { class: "mini" }, items.map((g) => h("span", { class: `tag ${TONES[g.tone] || "neutral"}` },
+    g.label.startsWith("SJR") ? g.value.replace(/^.*\((Q\d)\).*$/, "$1") : g.label === "DHET subsidy" ? `DHET: ${g.value}` : g.value)));
+}
+
+function requestRow(r) {
+  let text, actions = [];
+  const age = now() - r.created_at;
+  if (r.status === "pending") text = age > 90 ? "Waiting for your PC (Journal Scope must be running there)" : "Waiting for your PC…";
+  else if (r.status === "running") text = "Your PC is checking it…";
+  else if (r.status === "error") { text = "Failed: " + (r.error || "unknown error"); actions = [h("button", { class: "link", onclick: () => dismissRequest(r) }, "Dismiss")]; }
+  else if (r.status === "done" && r.candidates) {
+    text = "Several journals match.";
+    actions = [h("button", { class: "link", onclick: () => { state.view = { name: "candidates", request: r.uid }; render(); } }, "Choose"),
+      h("button", { class: "link", onclick: () => dismissRequest(r) }, "Dismiss")];
+  } else text = "Finished; fetching the report…";
+  return h("li", { class: `req ${r.status}` }, h("b", {}, r.query), h("span", {}, text), actions.length && h("div", { class: "acts" }, actions));
+}
+
+function homeScreen() {
+  const q = h("input", { name: "q", placeholder: "Journal title or ISSN", required: true, enterkeyhint: "search", autocapitalize: "off" });
+  const site = h("input", { name: "site", type: "url", placeholder: "Journal website (optional)", autocapitalize: "off" });
+  const reqs = Object.values(state.requests).sort((a, b) => b.created_at - a.created_at);
+  let reports = Object.values(state.reports).sort((a, b) => b.created_at - a.created_at);
+  const filterBox = reports.length > 8 && h("input", { class: "filter", type: "search", placeholder: "Filter reports", value: state.filter,
+    oninput: (e) => { state.filter = e.target.value; renderList(); } });
+  const list = h("ul", { class: "reports" });
+  function renderList() {
+    const f = state.filter.trim().toLowerCase();
+    const shown = f ? reports.filter((r) => (r.title + " " + r.query + " " + (r.issns || []).join(" ")).toLowerCase().includes(f)) : reports;
+    list.replaceChildren(...(shown.length ? shown.map((r) => h("li", {},
+      h("button", { type: "button", onclick: () => { state.view = { name: "report", uid: r.uid }; render(); window.scrollTo(0, 0); } },
+        h("b", {}, r.title || r.query),
+        h("small", {}, [(r.issns || [])[0], dateFmt(r.created_at)].filter(Boolean).join(" · ")),
+        miniChips(r.report && r.report.glance)))) : [h("li", { class: "empty" }, f ? "No reports match." : "Reports from your PC appear here.")]));
+  }
+  renderList();
+  return h("div", {},
+    h("header", { class: "bar" }, h("h1", {}, "Journal Scope"), h("button", { class: "link", onclick: () => confirm("Sign out? Reports stay on the PC and in Supabase.") && signOut() }, "Sign out")),
+    h("form", { class: "ask", onsubmit: (e) => { e.preventDefault(); requestLookup(q.value.trim(), site.value.trim()); } },
+      q, site, h("button", { class: "primary" }, "Check on my PC")),
+    reqs.length > 0 && h("ul", { class: "requests" }, reqs.map(requestRow)),
+    filterBox, list,
+    h("p", { class: "foot" }, state.error ? h("span", { class: "err" }, state.error) : state.lastSync ? `Synced ${timeFmt(state.lastSync)}` : "Syncing…"));
+}
+
+function backBar(title) {
+  return h("header", { class: "bar" }, h("button", { class: "link back", onclick: () => { state.view = { name: "home" }; render(); } }, "‹ Back"), h("span", { class: "bar-title" }, title || ""));
+}
+
+function reportScreen(id) {
+  const row = state.reports[id];
+  if (!row) { state.view = { name: "home" }; return homeScreen(); }
+  return h("div", {}, backBar(),
+    renderReport(row.report),
+    h("p", { class: "foot" }, `Checked ${dateFmt(row.created_at)} on your PC.`),
+    h("button", { class: "danger", onclick: () => deleteReport(id) }, "Delete report"));
+}
+
+function waitingScreen(rid) {
+  const r = state.requests[rid];
+  if (!r) { state.view = { name: "home" }; return homeScreen(); }
+  if (r.status === "done" && r.candidates) { state.view = { name: "candidates", request: rid }; return candidatesScreen(rid); }
+  return h("div", {}, backBar(), h("ul", { class: "requests" }, requestRow(r)),
+    h("p", { class: "note" }, "Lookups run on your PC, which checks for new requests every 20 seconds while Journal Scope is running. You can leave this screen; the report appears in the list."));
+}
+
+function candidatesScreen(rid) {
+  const r = state.requests[rid];
+  if (!r) { state.view = { name: "home" }; return homeScreen(); }
+  return h("div", {}, backBar(), renderCandidates(r.query, r.candidates || [], async (c) => {
+    await dismissRequest(r);
+    requestLookup(r.query, r.site, c.source_id);
+  }));
+}
+
+function render() {
+  let screen;
+  if (!state.conf.url || !state.conf.key) screen = setupScreen();
+  else if (!state.session) screen = signInScreen();
+  else if (state.view.name === "report") screen = reportScreen(state.view.uid);
+  else if (state.view.name === "waiting") screen = waitingScreen(state.view.request);
+  else if (state.view.name === "candidates") screen = candidatesScreen(state.view.request);
+  else screen = homeScreen();
+  const focused = document.activeElement && document.activeElement.name;
+  const typed = focused && document.activeElement.value;
+  root.replaceChildren(h("main", { class: "app" }, screen));
+  if (focused) {   // a background sync must not wipe what is being typed
+    const el = root.querySelector(`[name="${focused}"]`);
+    if (el) { el.value = typed; el.focus(); }
+  }
+}
+
+if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
+render();
+sync();

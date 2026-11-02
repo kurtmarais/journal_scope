@@ -12,61 +12,71 @@ Checks a journal's validity and credibility for publication by pulling, in one r
 
 Values are copied as each source states them, with a link back (and, for the journal site, the sentence each value was read from). Nothing is scored or combined.
 
-## Desktop app
+It comes in two parts, set up like Sidebar:
 
-Requires Python 3.10+ ([python.org](https://www.python.org/downloads/); on Windows tick "Add python.exe to PATH").
+1. **Desktop app (Windows, Python + PySide6).** A window with the search and your report history, plus a tray icon. Closing the window keeps it in the tray. It does all lookups.
+2. **Phone app (static web app on Cloudflare, added to the iPhone home screen).** Shows the synced reports and queues new lookups for the PC. Sync goes through your own Supabase project; see [docs/phone-setup.md](docs/phone-setup.md).
 
-- **Windows:** double-click `install.bat`.
-- **macOS / Linux:** run `bash install.sh` in this folder.
+## Install on Windows
 
-The script installs everything and puts a **Journal Scope** icon on your desktop. The icon opens the app in its own window; closing the window stops it. On macOS, the first time, right-click the icon and choose Open. Run the script again after pulling updates.
+Needs Python 3.10+ and Git. Run these in PowerShell, one at a time.
 
-## Phone
-
-The lookups need Python and Chromium, so they can't run on a phone. Instead, run the server on a computer and add the page to the phone's home screen, where it behaves like an app with its own icon. Two ways:
-
-**A. Your own computer, via Tailscale (recommended: free, private, works away from home).**
-1. Install [Tailscale](https://tailscale.com/download) on the computer and the phone, signed in to the same account.
-2. On the computer, in this folder: `.venv/bin/uvicorn app.main:app --port 8000` (Windows: `.venv\Scripts\uvicorn app.main:app --port 8000`).
-3. In another terminal: `tailscale serve --bg 8000`. It prints an `https://<computer>.<tailnet>.ts.net` address.
-4. Open that address on the phone, then Share > Add to Home Screen (iPhone) or menu > Install app (Android).
-
-The computer must be on for the phone to use it. Because lookups come from your home connection, sites block them less than they would a cloud server.
-
-**B. A cloud host (always available).** Deploy the included `Dockerfile` to any container host (e.g. Render, Fly.io, Railway). Set `JOURNAL_SCOPE_KEY` to a long random value, then open `https://<your-app>/?key=<that value>` once on each device; the key is remembered. Expect a small monthly cost, and expect SCImago and some publisher sites to block a data-centre address more often than a home one.
-
-Installing to the home screen needs an HTTPS address, which both options provide.
-
-## Run it from a terminal
-
-```bash
-python -m venv .venv
-source .venv/bin/activate        # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
-playwright install chromium
-uvicorn app.main:app
+```powershell
+git clone -b claude/upbeat-cerf-mntinq https://github.com/kurtmarais/journal_scope "$HOME\Apps\journal_scope"
 ```
 
-Open http://127.0.0.1:8000 and enter an ISSN (most reliable) or a journal title. If a title matches several SCImago journals you pick one. If the journal homepage isn't found, or is wrong, paste its URL into the "Journal website" field.
+```powershell
+cd "$HOME\Apps\journal_scope"
+```
 
-Reports can be shared as links, e.g. `http://127.0.0.1:8000/?q=1532-0464`. The JSON is at `/api/report?q=...`.
+```powershell
+py -m pip install --user -r requirements.txt
+```
+
+```powershell
+pyw run_journal_scope.py
+```
+
+Then right-click the tray icon:
+- **Add desktop shortcut** puts an icon on your real (OneDrive) Desktop.
+- **Start with Windows** keeps it in the tray from sign-in, so phone requests are handled.
+- **Update and restart** pulls the latest version. It also updates itself when you quit, as Sidebar does.
+
+Page rendering uses the Microsoft Edge already on Windows, so no browser download is needed. If Edge can't be used, run `py -m playwright install chromium` once.
+
+Data lives in `%APPDATA%\JournalScope`: `journal_scope.db` (history), `settings.json`, `launch.log`, `error.log`, `update.log`, and `startup-crash.log` if it fails to start.
 
 ## How lookups work
 
-- SCImago, Kanalregister and publisher sites are loaded in headless Chromium (SCImago and most publishers block plain scripted requests; Kanalregister builds its pages in the browser). CREST and SANLiC are fetched directly.
-- SANLiC's "Journals covered by R&P agreements" spreadsheet is downloaded and cached for 7 days in `~/.cache/journal_scope` (override with `JOURNAL_SCOPE_CACHE`).
-- Publisher statistics are found by their labels. Known statistics pages are tried first for Elsevier (Journal Insights), Springer, MDPI, Taylor & Francis, Frontiers, BMC and Wiley; other publishers use the homepage only.
-- `JOURNAL_SCOPE_CHROMIUM=/path/to/chrome` uses an existing Chromium. `JOURNAL_SCOPE_NO_BROWSER=1` disables the browser (SCImago, Kanalregister and many journal sites will then fail).
+- SCImago, Kanalregister and publisher sites are loaded in a headless browser (SCImago and most publishers block plain scripted requests; Kanalregister builds its pages in the browser). CREST and SANLiC are fetched directly.
+- SANLiC's "Journals covered by R&P agreements" spreadsheet is downloaded and cached for 7 days.
+- Publisher statistics are found by their labels. Known statistics pages are tried first for Elsevier (Journal Insights), Springer, MDPI, Taylor & Francis, Frontiers, BMC and Wiley; other publishers use the homepage only. If the homepage found is wrong, paste the journal's URL into "Journal website".
 
 ## Limitations
 
-- These are scraped pages, not APIs. When a site changes its layout, the matching module in `app/sources/` needs updating; the tests in `tests/` run against saved copies of each page and show what broke.
+- These are scraped pages, not APIs. When a site changes its layout, the matching module in `app/sources/` needs updating; the tests run against saved copies of each page and show which source broke.
 - SCImago does not publish the Clarivate Journal Impact Factor. Its "citations per document (2 years)" is the comparable figure; the JIF appears only if the journal's own site states it.
 - CREST's search does not accept ISSNs, so it is searched by title and then matched on ISSN.
 - Kanalregister offers an official API on request (publiseringskanaler@hkdir.no), which would be faster and more stable than rendering the site.
 
+## Layout
+
+```
+run_journal_scope.py   launcher for pyw / shortcuts (logs start, catches early crashes)
+desktop/               PySide6 app: tray, window (Qt WebEngine), sync engine, updater, Windows helpers
+app/                   lookup engine (sources/), local web server and UI, SQLite history
+web/                   phone app (static); report-view.js and report.css are shared with the desktop UI
+supabase/migrations/   tables + row-level security for sync
+wrangler.jsonc         Cloudflare deployment of web/
+tests/                 pytest: parsers, report, storage, sync (fake Supabase), desktop (offscreen Qt), phone (headless Chromium)
+```
+
 ## Tests
 
-```bash
-python -m pytest
+```powershell
+py -m pip install --user -r requirements-dev.txt
+```
+
+```powershell
+py -m pytest
 ```

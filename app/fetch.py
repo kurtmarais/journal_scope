@@ -12,6 +12,7 @@ import asyncio
 import hashlib
 import logging
 import os
+import sys
 import time
 from pathlib import Path
 
@@ -119,18 +120,25 @@ class Fetcher:
             except ImportError as exc:  # pragma: no cover - depends on install
                 raise FetchError("Playwright is not installed (pip install playwright)") from exc
             self._pw = await async_playwright().start()
-            kwargs = {"headless": True, "args": ["--no-sandbox"]}
+            base = {"headless": True, "args": ["--no-sandbox"]}
             if self.chromium_path:
-                kwargs["executable_path"] = self.chromium_path
-            try:
-                self._browser = await self._pw.chromium.launch(**kwargs)
-            except Exception as exc:
-                raise FetchError(
-                    "Could not start Chromium. Run `playwright install chromium` "
-                    "or set JOURNAL_SCOPE_CHROMIUM to a Chromium executable. "
-                    f"({exc})"
-                ) from exc
-            return self._browser
+                options = [{"executable_path": self.chromium_path}]
+            else:
+                # Windows always has Microsoft Edge, so nothing extra has to be
+                # downloaded (useful on managed PCs). Fall back to Playwright's Chromium.
+                options = ([{"channel": "msedge"}] if sys.platform == "win32" else []) + [{}]
+            errors = []
+            for extra in options:
+                try:
+                    self._browser = await self._pw.chromium.launch(**base, **extra)
+                    return self._browser
+                except Exception as exc:
+                    errors.append(str(exc).splitlines()[0])
+            raise FetchError(
+                "Could not start a browser for page rendering. Install Microsoft Edge, run "
+                "`python -m playwright install chromium`, or set JOURNAL_SCOPE_CHROMIUM. "
+                f"({'; '.join(errors)})"
+            )
 
     async def render(
         self,
