@@ -212,6 +212,83 @@ function siteCard(r) {
   return card("Journal website", "Days to decision, acceptance rate and APC as stated by the journal.", r, body, { site: "journal site", wide: true });
 }
 
+// ---------------------------------------------------- templates & guidelines
+// Links only, built from the journal's name, publisher and homepage.
+const PUBLISHERS = [
+  { key: "elsevier", name: "Elsevier", match: /elsevier|academic press|cell press|pergamon/i, host: /sciencedirect|elsevier/,
+    templates: "https://www.elsevier.com/researcher/author/policies-and-guidelines/latex-instructions",
+    overleaf: "https://www.overleaf.com/latex/templates/tagged/elsevier" },
+  { key: "springer", name: "Springer Nature", match: /springer|biomed central|\bbmc\b|nature portfolio|palgrave/i, host: /springer|biomedcentral|nature\.com/,
+    templates: "https://www.springernature.com/gp/authors/campaigns/latex-author-support",
+    overleaf: "https://www.overleaf.com/gallery/tagged/springer" },
+  { key: "wiley", name: "Wiley", match: /wiley|blackwell|hindawi/i, host: /wiley/,
+    templates: null, overleaf: "https://www.overleaf.com/gallery/tagged/wiley-official" },
+  { key: "tandf", name: "Taylor & Francis", match: /taylor|francis|routledge/i, host: /tandfonline/,
+    templates: "https://authorservices.taylorandfrancis.com/publishing-your-research/writing-your-paper/formatting-and-templates/" },
+  { key: "sage", name: "SAGE", match: /\bsage\b/i, host: /sagepub/,
+    templates: "https://www.sagepub.com/journals/information-for-authors/preparing-your-manuscript" },
+  { key: "ieee", name: "IEEE", match: /\bieee\b|institute of electrical/i, host: /ieee/,
+    templates: "https://template-selector.ieee.org/" },
+  { key: "mdpi", name: "MDPI", match: /\bmdpi\b/i, host: /mdpi\.com/, templates: "https://www.mdpi.com/authors/layout" },
+  { key: "frontiers", name: "Frontiers", match: /frontiers/i, host: /frontiersin/, templates: "https://www.frontiersin.org/guidelines/author-guidelines" },
+  { key: "oup", name: "Oxford University Press", match: /oxford university press|\boup\b/i, host: /academic\.oup\.com/,
+    templates: "https://academic.oup.com/pages/for-authors/journals/preparing-and-submitting-your-manuscript" },
+];
+
+export function journalGuidelinesUrl(homepage) {
+  let u;
+  try { u = new URL(homepage); } catch { return null; }
+  const seg = u.pathname.split("/").filter(Boolean);
+  const after = (name) => (seg.indexOf(name) >= 0 ? seg[seg.indexOf(name) + 1] : null);
+  const host = u.hostname;
+  if (/sciencedirect\.com$/.test(host) && after("journal")) return `https://www.sciencedirect.com/journal/${after("journal")}/publish/guide-for-authors`;
+  if (/journals\.elsevier\.com$/.test(host) && seg[0]) return `https://www.sciencedirect.com/journal/${seg[0]}/publish/guide-for-authors`;
+  if (/springer\.com$/.test(host)) { const m = /\/journal\/(\d+)/.exec(u.pathname); if (m) return `https://link.springer.com/journal/${m[1]}/submission-guidelines`; }
+  if (/mdpi\.com$/.test(host) && after("journal")) return `https://www.mdpi.com/journal/${after("journal")}/instructions`;
+  if (/tandfonline\.com$/.test(host)) {
+    const code = after("journals") || after("toc") || after("loi") || new URLSearchParams(u.search).get("journalCode");
+    if (code) return `https://www.tandfonline.com/action/authorSubmission?show=instructions&journalCode=${code}`;
+  }
+  if (/frontiersin\.org$/.test(host) && after("journals")) return `https://www.frontiersin.org/journals/${after("journals")}/for-authors/author-guidelines`;
+  if (/sagepub\.com$/.test(host) && after("home")) return `https://journals.sagepub.com/author-instructions/${after("home").toUpperCase()}`;
+  if (/onlinelibrary\.wiley\.com$/.test(host) && after("journal")) return `https://onlinelibrary.wiley.com/page/journal/${after("journal")}/homepage/forauthors.html`;
+  return null;
+}
+
+export function templateLinks(report) {
+  const id = report.identity || {};
+  const s = report.sources || {};
+  const data = (k) => ((s[k] && s[k].status === "found" && s[k].data) || {});
+  const title = id.title || report.query || "";
+  const publisher = id.publisher || data("scopus").publisher || data("crest").publisher || data("kanalregister").publisher || "";
+  const homepage = id.homepage || data("scopus").homepage || data("kanalregister").homepage || (data("journal_site").homepage) || "";
+  let host = "";
+  try { host = new URL(homepage).hostname; } catch { /* no homepage */ }
+  const pub = PUBLISHERS.find((p) => p.match.test(publisher) || (host && p.host.test(host)));
+  const links = [];
+  const guide = journalGuidelinesUrl(homepage);
+  if (guide) links.push({ label: "Author guidelines for this journal", note: "templates are usually linked here", url: guide });
+  else if (homepage) links.push({ label: "Journal homepage", note: "look for 'Guide for authors' or 'Submission guidelines'", url: homepage });
+  if (pub && pub.templates) links.push({ label: `${pub.name} templates and formatting`, note: "the publisher's Word/LaTeX templates", url: pub.templates });
+  if (pub && pub.overleaf) links.push({ label: `${pub.name} templates on Overleaf`, note: "official LaTeX templates", url: pub.overleaf });
+  if (title) {
+    links.push({ label: "Search Overleaf for this journal's template", note: "LaTeX, via a web search of Overleaf's gallery",
+      url: `https://www.google.com/search?q=${encodeURIComponent(`site:overleaf.com/latex/templates "${title}"`)}` });
+    links.push({ label: "Citation style (Zotero / Mendeley / EndNote)", note: "the journal's reference style, if listed",
+      url: `https://www.zotero.org/styles?q=${encodeURIComponent(title)}` });
+  }
+  return links;
+}
+
+function templatesCard(report) {
+  const links = templateLinks(report);
+  if (!links.length) return null;
+  return h("article", { class: "card templates" },
+    h("header", {}, h("h3", {}, "Templates & author guidelines")),
+    h("p", { class: "purpose" }, "Where to get this journal's manuscript template and reference style."),
+    h("ul", { class: "tlinks" }, links.map((l) => h("li", {}, link(l.url, l.label), l.note && h("span", { class: "ctx" }, ` (${l.note})`)))));
+}
+
 export function glanceTiles(glance) {
   return h("div", { class: "glance" }, (glance || []).map((g) =>
     h("div", { class: `tile ${g.tone}` },
@@ -232,7 +309,7 @@ export function renderReport(report) {
     report.timings && Object.keys(report.timings).length > 0 && h("p", { class: "timings" },
       "Time taken: " + Object.entries(report.timings).map(([k, v]) => `${{ scopus: "Scopus", crest: "CREST", sanlic: "SANLiC", kanalregister: "Kanalregister", journal_site: "journal site" }[k] || k} ${v} s`).join(" · ")),
     h("div", { class: "cards" },
-      s.scopus ? scopusCard(s.scopus) : s.scimago ? scimagoCard(s.scimago) : null, crestCard(s.crest), kanalCard(s.kanalregister), sanlicCard(s.sanlic), siteCard(s.journal_site)));
+      s.scopus ? scopusCard(s.scopus) : s.scimago ? scimagoCard(s.scimago) : null, crestCard(s.crest), kanalCard(s.kanalregister), sanlicCard(s.sanlic), siteCard(s.journal_site), templatesCard(report)));
 }
 
 export function renderCandidates(query, candidates, onPick) {

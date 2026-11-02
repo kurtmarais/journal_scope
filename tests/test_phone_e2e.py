@@ -154,6 +154,10 @@ def test_phone_searches_lists_without_pc(tmp_path):
             for text in ("10.8 (Q1, 95th percentile)", "Eligible for subsidy", "Covered (Hybrid)", "Coverage 2001-2026"):
                 assert await page.is_visible(f"text={text}"), text
             assert await page.is_visible("article:has(h3:has-text('Kanalregister')) >> text=Not checked")
+            guide = page.locator(".templates a", has_text="Author guidelines for this journal")
+            assert await guide.get_attribute("href") == \
+                "https://www.sciencedirect.com/journal/journal-of-biomedical-informatics/publish/guide-for-authors"
+            assert await page.locator(".templates a", has_text="Elsevier templates on Overleaf").count() == 1
             if SHOTS:
                 await page.screenshot(path=f"{SHOTS}/phone_quick.png", full_page=True)
             assert await page.evaluate("document.documentElement.scrollWidth") <= 393

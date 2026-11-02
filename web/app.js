@@ -6,7 +6,7 @@ import { h, normaliseIssn, normaliseTitle, parseScopusEntry, quickReport, render
 import { AuthError, Supabase, SyncError } from "./supabase.js";
 import { discover, renderDiscover } from "./discover.js";
 
-const APP_VERSION = "2026.11.4";   // shown at the bottom of the home screen; bump with each phone change
+const APP_VERSION = "2026.11.5";   // shown at the bottom of the home screen; bump with each phone change
 const root = document.getElementById("root");
 const LS = {
   get: (k, d = null) => { try { const v = localStorage.getItem("js." + k); return v === null ? d : JSON.parse(v); } catch { return d; } },

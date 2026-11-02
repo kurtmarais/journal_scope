@@ -83,3 +83,4 @@ label.check input { width: auto; }
 .d-chips { display: flex; flex-wrap: wrap; gap: 4px; }
 .d-chips .tag { margin: 0; font-size: .72rem; padding: 1px 6px; }
 .tag.src { background: transparent; border: 1px solid var(--line); color: var(--muted); }
+.tlinks { margin: 0; padding-left: 18px; display: grid; gap: 6px; font-size: .9rem; }
