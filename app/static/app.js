@@ -57,11 +57,17 @@ async function run(params) {
   const STATE = { working: "checking…", found: "done", not_found: "done", skipped: "skipped", error: "failed" };
   const started = Date.now();
   setStatus("Checking Scopus, CREST, SANLiC, Kanalregister and the journal website…");
+  let shown = "";
   const poll = setInterval(async () => {
     try {
       const p = await (await fetch("/api/progress")).json();
-      const parts = Object.keys(LABELS).filter((k) => p[k]).map((k) => `${LABELS[k]}: ${STATE[p[k]] || p[k]}`);
+      const st = p.states || {};
+      const parts = Object.keys(LABELS).filter((k) => st[k]).map((k) => `${LABELS[k]}: ${STATE[st[k]] || st[k]}`);
       setStatus(`Checking (${Math.round((Date.now() - started) / 1000)} s)… ` + parts.join(" · "));
+      if (p.report) {                       // show finished sources while the rest load
+        const key = JSON.stringify(st);
+        if (key !== shown) { shown = key; $("#out").replaceChildren(renderReport(p.report)); }
+      }
     } catch { /* ignore */ }
   }, 700);
   try {

@@ -135,9 +135,42 @@ def test_hanging_source_times_out_without_blocking_the_report(tmp_path, monkeypa
     monkeypatch.setitem(rep.LIMITS, "kanalregister", 0.3)
     seen = {}
     fetcher = FakeFetcher(make_xlsx(tmp_path / "l.xlsx"))
-    r = asyncio.run(build_report(fetcher, "1532-0464", scopus_key="test-key", progress=lambda k, s: seen.__setitem__(k, s)))
+    r = asyncio.run(build_report(fetcher, "1532-0464", scopus_key="test-key", progress=lambda k, s, res=None: seen.__setitem__(k, s)))
     k = r["sources"]["kanalregister"]
     assert k["status"] == "error" and "No answer within 0.3 seconds" in k["error"]
     assert r["sources"]["crest"]["status"] == "found" and r["sources"]["journal_site"]["status"] == "found"
     assert set(r["timings"]) == {"scopus", "crest", "sanlic", "kanalregister", "journal_site"}
     assert seen["kanalregister"] == "error" and seen["scopus"] == "found"
+
+
+def test_partial_report_and_kanalregister_shortcuts(tmp_path, monkeypatch):
+    import app.report as rep
+    from app.sources import kanalregister
+
+    monkeypatch.setattr(kanalregister, "_ID_CACHE", tmp_path / "ids.json")
+    fetcher = FakeFetcher(make_xlsx(tmp_path / "l.xlsx"))
+    rendered = []
+    real_render = fetcher.render
+
+    async def render(url, **kw):
+        rendered.append(url)
+        return await real_render(url)
+
+    fetcher.render = render
+    order = []
+    asyncio.run(build_report(fetcher, "1532-0464", scopus_key="test-key",
+                             progress=lambda k, s, res=None: order.append((k, s))))
+    # Kanalregister starts before Scopus has finished
+    assert order.index(("kanalregister", "working")) < order.index(("scopus", "found"))
+    assert any("/sok" in u for u in rendered)
+
+    # Second lookup: the Kanalregister entry is remembered, no search page
+    rendered.clear()
+    r = asyncio.run(build_report(fetcher, "1532-0480", scopus_key="test-key"))
+    assert r["sources"]["kanalregister"]["status"] == "found"
+    assert not any("/sok" in u for u in rendered)
+
+    # A partial report shows finished sources and 'working' for the rest
+    p = rep.partial_report("1532-0464", {"scopus": r["sources"]["scopus"]})
+    assert p["sources"]["crest"]["status"] == "working" and p["identity"]["title"] == "Journal of Biomedical Informatics"
+    assert [g["label"] for g in p["glance"]][:2] == ["Indexed in Scopus", "CiteScore 2025"]

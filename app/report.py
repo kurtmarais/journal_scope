@@ -14,7 +14,8 @@ from .util import looks_like_issn, normalise_issn
 
 def _glance(report: dict) -> list[dict]:
     """Headline values, each taken straight from one source."""
-    s = report["sources"]
+    working = {"status": "working", "data": {}}
+    s = {k: report["sources"].get(k) or working for k in ("scopus", "crest", "kanalregister", "sanlic", "journal_site")}
     out: list[dict] = []
 
     sc = s["scopus"]
@@ -59,7 +60,7 @@ def _glance(report: dict) -> list[dict]:
         if k["data"].get("ceased"):
             value += f" (ceased {k['data']['ceased']})"
         out.append({"label": "Norwegian Register", "value": value, "tone": tone, "source": "kanalregister"})
-    elif k["status"] != "error":
+    elif k["status"] == "not_found":
         out.append({"label": "Norwegian Register", "value": "Not listed", "tone": "warn", "source": "kanalregister"})
 
     n = s["sanlic"]
@@ -67,7 +68,7 @@ def _glance(report: dict) -> list[dict]:
         d = n["data"]
         value = ("Covered" if d["included"] else "Not covered") + (f" ({d['oa_type']})" if d.get("oa_type") else "")
         out.append({"label": "SANLiC APC agreement", "value": value, "tone": "good" if d["included"] else "warn", "source": "sanlic"})
-    elif n["status"] != "error":
+    elif n["status"] == "not_found":
         out.append({"label": "SANLiC APC agreement", "value": "Not covered", "tone": "warn", "source": "sanlic"})
 
     j = s["journal_site"]
@@ -87,14 +88,29 @@ NAMES = {"scopus": scopus.NAME, "crest": crest.NAME, "sanlic": sanlic.NAME,
 async def _timed(key: str, coro, timings: dict, progress):
     """Run one source with a time limit, recording how long it took."""
     start = time.monotonic()
-    progress(key, "working")
+    progress(key, "working", None)
     try:
         result = await asyncio.wait_for(coro, LIMITS[key])
     except asyncio.TimeoutError:
         result = source_result(NAMES[key], ERROR, error=f"No answer within {LIMITS[key]} seconds; try again later.")
     timings[key] = round(time.monotonic() - start, 1)
-    progress(key, result[0]["status"] if isinstance(result, tuple) else result["status"])
+    res = result[0] if isinstance(result, tuple) else result
+    progress(key, res["status"], res)
     return result
+
+
+def partial_report(query: str, results: dict) -> dict:
+    """A report from the sources finished so far; the rest show as 'checking'."""
+    sources = {k: results.get(k) or {"source": NAMES[k], "status": "working", "data": {}} for k in NAMES}
+    sd = sources["scopus"]["data"] if sources["scopus"]["status"] == FOUND else {}
+    kd = sources["kanalregister"]["data"] if sources["kanalregister"]["status"] == FOUND else {}
+    report = {"query": query, "candidates": [], "partial": True, "sources": sources,
+              "identity": {"title": sd.get("title") or kd.get("title") or query,
+                           "issns": sd.get("issns") or kd.get("issns") or [],
+                           "publisher": sd.get("publisher") or kd.get("publisher"), "country": kd.get("country"),
+                           "homepage": sd.get("homepage") or kd.get("homepage")}}
+    report["glance"] = _glance(report)
+    return report
 
 
 async def build_report(
@@ -104,11 +120,15 @@ async def build_report(
     site_url: str | None = None,
     scopus_key: str | None = None,
     scopus_token: str | None = None,
-    progress=lambda key, state: None,
+    progress=lambda key, state, result=None: None,
 ) -> dict:
     query = (query or "").strip()
     issn = normalise_issn(query) if looks_like_issn(query) else None
     timings: dict[str, float] = {}
+    # With an ISSN, Kanalregister (the slowest source) can start straight away, alongside Scopus.
+    early_kanal = (asyncio.ensure_future(_timed("kanalregister", kanalregister.lookup(fetcher, None, [issn]), timings, progress))
+                   if issn and not source_id else None)
+    await asyncio.sleep(0)   # let it start before Scopus
 
     res = await _timed("scopus", scopus.lookup(fetcher, query, issn, source_id, key=scopus_key, token=scopus_token),
                        timings, progress)
@@ -122,6 +142,8 @@ async def build_report(
         issns.insert(0, issn)
 
     if candidates:  # ambiguous title: let the user choose before querying the rest
+        if early_kanal:
+            early_kanal.cancel()
         for key in ("crest", "kanalregister", "sanlic", "journal_site"):
             report["sources"][key] = {"source": key, "status": "skipped", "data": {}, "note": "Choose a journal first."}
         report["identity"] = {"title": None, "issns": [], "publisher": None}
@@ -137,7 +159,8 @@ async def build_report(
             url = k["data"].get("homepage") if k["status"] == FOUND else None
         return await _timed("journal_site", journal_site.lookup(fetcher, url), timings, progress)
 
-    kanal_task = asyncio.ensure_future(_timed("kanalregister", kanalregister.lookup(fetcher, title, issns), timings, progress))
+    kanal_task = early_kanal or asyncio.ensure_future(
+        _timed("kanalregister", kanalregister.lookup(fetcher, title, issns), timings, progress))
     if not title:   # CREST searches by title only: get it from Kanalregister first
         k = await kanal_task
         if k["status"] == FOUND and k["data"].get("title"):

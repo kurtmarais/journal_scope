@@ -87,6 +87,14 @@ class Fetcher:
         except httpx.HTTPError as exc:
             raise FetchError(f"{type(exc).__name__}: {exc}") from exc
 
+    async def resolve(self, url: str) -> str:
+        """The address `url` ends up at after redirects (or `url` if that can't be found)."""
+        try:
+            resp = await self.get(url)
+            return str(resp.url)
+        except FetchError:
+            return url
+
     async def get_text(self, url: str, headers: dict | None = None) -> str:
         key = "get:" + url
         hit = self._cache_get(key)

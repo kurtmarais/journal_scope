@@ -37,6 +37,7 @@ const STATUS_CHIP = {
   not_found: ["Not found", "warn"],
   error: ["Could not check", "bad"],
   skipped: ["Not checked", "neutral"],
+  working: ["Checking…", "neutral"],
 };
 
 function when(iso) {

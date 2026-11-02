@@ -119,7 +119,7 @@ class QtRenderer(QObject):
 
         if not blocked and st.get("ready"):
             job.ready_since = job.ready_since or time.time()
-            if time.time() - job.ready_since >= 0.8:   # let late scripts settle
+            if time.time() - job.ready_since >= 0.3:   # let late scripts settle
                 job.page.toHtml(lambda html: self._finish(job, html=html))
             return
         if blocked:

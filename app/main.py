@@ -19,7 +19,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .fetch import Fetcher
 from .paths import default_data_dir
-from .report import build_report
+from .report import build_report, partial_report
 from .storage import Database
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
@@ -55,10 +55,16 @@ async def run_lookup(q: str, sid: str | None = None, site: str | None = None) ->
     if site and not site.startswith(("http://", "https://")):
         site = "https://" + site
     key, token = app.state.scopus_credentials()
-    progress = {}
-    app.state.progress = progress      # shown live in the window while a lookup runs
+    states, results = {}, {}
+    app.state.progress = {"query": q, "states": states, "results": results}   # shown live in the window
+
+    def on_progress(k, state, result=None):
+        states[k] = state
+        if result is not None:
+            results[k] = result
+
     return await build_report(app.state.fetcher, q, source_id=sid, site_url=site, scopus_key=key, scopus_token=token,
-                              progress=lambda k, state: progress.__setitem__(k, state))
+                              progress=on_progress)
 
 
 @app.get("/")
@@ -108,7 +114,11 @@ async def history_delete(uid: str):
 
 @app.get("/api/progress")
 async def progress():
-    return app.state.progress
+    p = app.state.progress
+    if not p:
+        return {"states": {}, "report": None}
+    report = partial_report(p["query"], dict(p["results"])) if p["results"] else None
+    return {"states": dict(p["states"]), "report": report}
 
 
 @app.get("/api/status")

@@ -162,3 +162,24 @@ def test_candidate_urls():
     assert journal_site.candidate_urls("https://www.tandfonline.com/toc/tjis20/current")[0] == \
         "https://www.tandfonline.com/journals/tjis20/about-this-journal"
     assert journal_site.candidate_urls("https://example.org/j") == ["https://example.org/j"]
+
+
+def test_more_publisher_wordings():
+    html = """<main>
+      <div><span>13 days avg</span> <span>from submission to first decision</span></div>
+      <div><span>81 days avg</span> <span>from submission to first post-review decision</span></div>
+      <div><span>21 days avg</span> <span>from acceptance to online publication</span></div>
+      <div><span>13%</span> <span>acceptance rate</span></div>
+      <dl><div><dt>Submission to acceptance (median days)</dt><dd>142</dd></div></dl>
+    </main>"""
+    m = journal_site.extract_metrics(html, "u")
+    assert m["first_decision"]["value"] == "13 days"
+    assert m["decision_after_review"]["value"] == "81 days"
+    assert m["acceptance_to_publication"]["value"] == "21 days"
+    assert m["acceptance_rate"]["value"] == "13%"
+    assert m["submission_to_acceptance"]["value"] == "142"
+
+
+def test_candidates_follow_springer_link_for_bmc():
+    assert journal_site.candidate_urls("https://link.springer.com/journal/12911/aims-and-scope") == \
+        ["https://link.springer.com/journal/12911"]
