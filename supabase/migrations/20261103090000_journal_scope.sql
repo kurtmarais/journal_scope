@@ -2,8 +2,8 @@
 --   journal_reports : reports produced by the desktop app (read and deleted on the phone)
 --   journal_requests: lookups asked for on the phone, picked up by the desktop app
 -- Every row belongs to one Supabase Auth user; row-level security means a
--- signed-in user can only see or change their own rows. Table names are
--- prefixed so this can share a project with other apps (e.g. Sidebar).
+-- signed-in user can only see or change their own rows.
+-- Run in the journal_scope Supabase project.
 -- Times are Unix epoch seconds written by the clients (newest edit wins);
 -- server_updated_at is set by the database and is what clients sync from.
 

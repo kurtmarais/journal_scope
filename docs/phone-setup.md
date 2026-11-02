@@ -11,23 +11,27 @@ The phone app shows the reports your PC has produced and lets you ask for new on
 - **Checking on the phone:** type a title or ISSN and tap **Check on my PC**. The PC picks the request up within 20 seconds, provided Journal Scope is running there (in the tray counts). The report then opens on the phone. If the PC is off, the request waits until it is next on.
 - **Deleting** a report on either device removes it from both.
 
-The steps below match the Sidebar phone setup. If you use the **same Supabase project as Sidebar** (the default: `web/config.js` is pre-filled with it), skip step 2. Your existing account works, and Journal Scope's tables are separate from Sidebar's.
+Journal Scope uses its **own Supabase project** (`journal_scope`), separate from Sidebar's. The steps match the Sidebar phone setup.
 
 ## 1. Create the database tables (one time)
 
-1. In Supabase, open your project, then **SQL Editor**, then **New query**.
+1. In Supabase, open the **journal_scope** project, then **SQL Editor**, then **New query**.
 2. Paste the contents of [`supabase/migrations/20261103090000_journal_scope.sql`](../supabase/migrations/20261103090000_journal_scope.sql) and click **Run**.
 
 This creates `journal_reports` and `journal_requests` with row-level security. A signed-in account can only see or change its own rows, and signed-out requests get nothing. It is safe to run again.
 
-## 2. Account (only for a new project)
+## 2. Create your account and lock sign-ups (one time)
+
+This project has its own users, so create an account here even if you have one in Sidebar's project. The same email and password can be reused.
 
 1. **Authentication → Users → Add user → Create new user**, with **Auto Confirm User** ticked.
 2. **Authentication → Sign In / Providers**: keep **Email** on and turn **off** "Allow new users to sign up".
 
 ## 3. Turn on sync on the PC
 
-Right-click the tray icon → **Phone sync…**. Enter the project URL, publishable key (`sb_publishable_…`), email and password, then click **Sign in and sync**.
+**Project Settings → API Keys** in the journal_scope project gives the **Project URL** (`https://<something>.supabase.co`) and the **publishable key** (`sb_publishable_…`). Never use the secret or service_role key.
+
+Right-click the tray icon → **Phone sync…**. Enter that URL and key, your email and password, then click **Sign in and sync**.
 
 - The password is used once and not stored. The sign-in token is encrypted with Windows data protection for your account.
 - The bottom of the history panel shows **Synced HH:MM**.
@@ -44,8 +48,9 @@ Optional: protect the address with **Zero Trust → Access** (allow only your em
 ## 5. Install it on the phone
 
 1. Open the workers.dev address in Safari.
-2. Sign in with your Supabase email and password.
-3. **Share → Add to Home Screen**.
+2. Enter the project URL and publishable key. To skip this step, put them in `web/config.js` and push.
+3. Sign in with your Supabase email and password.
+4. **Share → Add to Home Screen**.
 
 Home-screen apps keep their own storage, separate from Safari, so sign in again after adding it.
 
@@ -59,3 +64,15 @@ Home-screen apps keep their own storage, separate from Safari, so sign in again 
 | PC | Report history (`%APPDATA%\JournalScope\journal_scope.db`), settings and logs. |
 
 The phone app loads no third-party scripts, fonts or trackers, and its security headers (`web/_headers`) only allow connections to Supabase.
+
+## If you ran the setup in Sidebar's project earlier
+
+An earlier version used Sidebar's Supabase project. If you ran the Journal Scope SQL there, remove it: in **Sidebar's** project, **SQL Editor**, run the following. It only touches Journal Scope's tables; Sidebar's `boards` and `cards` are unaffected.
+
+```sql
+drop table if exists public.journal_reports;
+drop table if exists public.journal_requests;
+drop function if exists public.journal_scope_newest_wins();
+```
+
+If the desktop app was already signed in to Sidebar's project: tray → **Phone sync…** → **Sign out**, then sign in with the journal_scope project's URL and key. On the phone, **Sign out**, tap **Change project** on the sign-in screen, and enter the journal_scope project's URL and key.
