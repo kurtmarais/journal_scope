@@ -18,12 +18,13 @@ from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 EMAIL, PASSWORD = "me@example.org", "correct horse"
-TABLES = ("journal_reports", "journal_requests")
+TABLES = ("journal_reports", "journal_requests", "ref_scimago", "ref_crest", "ref_sanlic", "ref_lists")
 DEFAULTS = {
     "journal_reports": {"query": "", "title": "", "issns": [], "report": {}, "deleted": False},
     "journal_requests": {"query": "", "sid": None, "site": None, "status": "pending", "report_uid": None,
                          "candidates": None, "error": None, "deleted": False},
 }
+PK = {t: ("key" if t.startswith("ref_") else "uid") for t in TABLES}
 
 
 class FakeSupabase:
@@ -48,6 +49,9 @@ class FakeSupabase:
         return {"access_token": a, "refresh_token": r, "expires_in": 3600, "user": {"id": "u1", "email": EMAIL}}
 
     def _write(self, table: str, row: dict, merge: bool) -> None:
+        if table.startswith("ref_"):          # plain upsert, no newest-wins trigger
+            self.tables[table][row["key"]] = {**self.tables[table].get(row["key"], {}), **row}
+            return
         cur = self.tables[table].get(row["uid"])
         if cur is not None:
             if not merge:
@@ -87,7 +91,8 @@ class FakeSupabase:
                 rows = [r for r in self.tables[table].values() if self._match(r, filters)]
                 if "order" in q:
                     col, _, direction = q["order"].partition(".")
-                    rows.sort(key=lambda r: r.get(col) or 0, reverse=direction == "desc")
+                    rows.sort(key=lambda r: (r.get(col) is not None, r.get(col) or 0) if "desc" in direction else (r.get(col) or 0),
+                              reverse=direction.startswith("desc"))
                 rows = rows[: int(q.get("limit", 10_000))]
                 return 200, json.loads(json.dumps(rows))
             if method == "POST":
@@ -100,21 +105,63 @@ class FakeSupabase:
                 return 201, None
             if method == "PATCH":
                 for r in [r for r in self.tables[table].values() if self._match(r, filters)]:
-                    self._write(table, {**data, "uid": r["uid"]}, merge=True)
+                    self._write(table, {**data, PK[table]: r[PK[table]]}, merge=True)
+                return 204, None
+            if method == "DELETE":
+                if not filters:
+                    return 400, {"message": "DELETE requires a WHERE clause"}
+                for k in [k for k, r in self.tables[table].items() if self._match(r, filters)]:
+                    del self.tables[table][k]
                 return 204, None
         return 405, {"message": "method not allowed"}
 
     @staticmethod
-    def _match(row: dict, filters: dict) -> bool:
+    def _split(text: str) -> list[str]:
+        """Split 'a.eq.1,b.in.(x,y)' on top-level commas."""
+        parts, depth, cur = [], 0, ""
+        for ch in text:
+            if ch == "," and depth == 0:
+                parts.append(cur)
+                cur = ""
+                continue
+            depth += ch == "("
+            depth -= ch == ")"
+            cur += ch
+        return parts + [cur] if cur else parts
+
+    @classmethod
+    def _cond(cls, v, cond: str) -> bool:
+        op, _, val = cond.partition(".")
+        if op == "eq":
+            return str(v).lower() == val.lower()
+        if op == "neq":
+            return str(v).lower() != val.lower()
+        if op == "gt":
+            return v is not None and str(v) > val
+        if op == "in":
+            return str(v) in val.strip("()").split(",")
+        if op in ("cs", "ov"):
+            want = [x for x in val.strip("{}").split(",") if x]
+            have = v or []
+            return all(x in have for x in want) if op == "cs" else any(x in have for x in want)
+        if op == "ilike":
+            import re as _re
+            pattern = "^" + ".*".join(_re.escape(p) for p in val.split("*")) + "$"
+            return v is not None and _re.match(pattern, str(v), _re.I) is not None
+        raise ValueError(f"unsupported filter {cond}")
+
+    @classmethod
+    def _match(cls, row: dict, filters: dict) -> bool:
         for col, cond in filters.items():
-            op, _, val = cond.partition(".")
-            v = row.get(col)
-            if op == "eq":
-                if str(v).lower() != val.lower() and not (isinstance(v, bool) and str(v).lower() == val):
+            if col == "or":
+                ok = False
+                for part in cls._split(cond.strip()[1:-1]):
+                    c, _, rest = part.partition(".")
+                    ok = ok or cls._cond(row.get(c), rest)
+                if not ok:
                     return False
-            elif op == "gt":
-                if v is None or str(v) <= val:
-                    return False
+            elif not cls._cond(row.get(col), cond):
+                return False
         return True
 
     # ------------------------------------------------------ urllib opener
@@ -136,7 +183,7 @@ class FakeSupabase:
             def _cors(self):
                 self.send_header("Access-Control-Allow-Origin", "*")
                 self.send_header("Access-Control-Allow-Headers", "*")
-                self.send_header("Access-Control-Allow-Methods", "GET, POST, PATCH, OPTIONS")
+                self.send_header("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
 
             def do_OPTIONS(self):
                 self.send_response(204)
@@ -155,7 +202,7 @@ class FakeSupabase:
                 self.end_headers()
                 self.wfile.write(raw)
 
-            do_GET = do_POST = do_PATCH = _any
+            do_GET = do_POST = do_PATCH = do_DELETE = _any
 
         srv = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         threading.Thread(target=srv.serve_forever, daemon=True).start()

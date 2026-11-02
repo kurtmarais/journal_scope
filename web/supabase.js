@@ -64,6 +64,10 @@ export class Supabase {
     }
   }
 
+  async select(table, params, token) {
+    return (await this.request("GET", `/rest/v1/${table}`, { token, params: { select: "*", ...params } })) || [];
+  }
+
   async insert(table, row, token) {
     await this.request("POST", `/rest/v1/${table}`, {
       body: row, token, headers: { Prefer: "return=minimal" },

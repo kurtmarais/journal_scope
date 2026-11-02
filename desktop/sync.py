@@ -22,9 +22,11 @@ import urllib.parse
 import urllib.request
 from typing import Any, Callable
 
+from pathlib import Path
+
 from app.storage import Database
 
-from . import winplatform
+from . import reflists, winplatform
 
 PAGE = 1000
 TIMEOUT = 30
@@ -102,11 +104,16 @@ class SupabaseClient:
                 return rows
             cursor = page[-1]["server_updated_at"]
 
-    def upsert(self, table: str, rows: list[dict], token: str) -> None:
-        for i in range(0, len(rows), 25):   # reports are a few tens of KB each
-            self._request("POST", f"/rest/v1/{table}", rows[i:i + 25], token=token,
-                          params={"on_conflict": "uid"},
+    def upsert(self, table: str, rows: list[dict], token: str, on_conflict: str = "uid", chunk: int = 25) -> None:
+        # Reports are a few tens of KB each (chunks of 25); reference-list rows are small.
+        for i in range(0, len(rows), chunk):
+            self._request("POST", f"/rest/v1/{table}", rows[i:i + chunk], token=token,
+                          params={"on_conflict": on_conflict},
                           headers={"Prefer": "resolution=merge-duplicates,return=minimal"})
+
+    def delete(self, table: str, filters: dict, token: str) -> None:
+        self._request("DELETE", f"/rest/v1/{table}", token=token, params=filters,
+                      headers={"Prefer": "return=minimal"})
 
     def pending_requests(self, token: str) -> list[dict]:
         return self._request("GET", "/rest/v1/journal_requests", token=token, params={
@@ -153,8 +160,15 @@ class SyncEngine:
     """Holds sync settings and performs cycles. Not thread-safe: one cycle at a time."""
 
     def __init__(self, db: Database, settings: dict, save_settings: Callable[[dict], None],
-                 lookup: Lookup, opener: Opener | None = None):
+                 lookup: Lookup, opener: Opener | None = None,
+                 get_bytes: Callable[[str], bytes] | None = None,
+                 get_scimago: Callable[[], bytes] | None = None,
+                 tmp_dir: Path | None = None):
         self.db = db
+        self.get_bytes = get_bytes
+        self.get_scimago = get_scimago
+        self.tmp_dir = tmp_dir
+        self.force_lists = False
         self.settings = settings
         self._save = save_settings
         self.lookup = lookup
@@ -237,4 +251,20 @@ class SyncEngine:
                 self._upload_dirty(client, token)
                 client.update_request(req["uid"], {"status": "done", "report_uid": uid}, token)
             looked_up += 1
-        return {"uploaded": uploaded, "downloaded": downloaded, "looked_up": looked_up}
+
+        lists = None
+        if self.get_bytes and self.get_scimago and (self.force_lists or reflists.due(self.settings)):
+            lists = self.refresh_lists(client)
+        return {"uploaded": uploaded, "downloaded": downloaded, "looked_up": looked_up, "lists": lists}
+
+    def refresh_lists(self, client: SupabaseClient | None = None) -> dict[str, str]:
+        """Reload the reference lists the phone searches (about weekly)."""
+        self.force_lists = False
+        self.settings["ref_tried_at"] = time.time()
+        results = reflists.refresh(client or self.client(), self._token, self.get_bytes, self.get_scimago,
+                                   self.tmp_dir or Path("."))
+        if all(v.startswith("ok") for v in results.values()):
+            self.settings["ref_refreshed_at"] = time.time()
+        self.settings["ref_results"] = results
+        self._save(self.settings)
+        return results

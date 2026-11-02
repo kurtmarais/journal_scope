@@ -15,7 +15,7 @@ Values are copied as each source states them, with a link back (and, for the jou
 It comes in two parts, set up like Sidebar:
 
 1. **Desktop app (Windows, Python + PySide6).** A window with the search and your report history, plus a tray icon. Closing the window keeps it in the tray. It does all lookups.
-2. **Phone app (static web app on Cloudflare, added to the iPhone home screen).** Shows the synced reports and queues new lookups for the PC. Sync goes through your own Supabase project; see [docs/phone-setup.md](docs/phone-setup.md).
+2. **Phone app (static web app on Cloudflare, added to the iPhone home screen).** Checks journals on its own from SCImago, CREST and SANLiC lists the PC loads into Supabase weekly, and can ask the PC for the full report (adds Kanalregister and the journal's own statistics). Sync goes through your own Supabase project; see [docs/phone-setup.md](docs/phone-setup.md).
 
 ## Install on Windows
 

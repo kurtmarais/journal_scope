@@ -17,7 +17,7 @@ from PySide6.QtWidgets import QApplication, QMenu, QMessageBox, QSystemTrayIcon
 from app.paths import default_data_dir
 from app.storage import Database
 
-from . import __version__, settings as settings_mod, updater, winplatform
+from . import __version__, reflists, settings as settings_mod, updater, winplatform
 from .sync import SyncEngine
 from .sync_qt import SyncController, SyncDialog
 from .renderer import QtRenderer
@@ -25,6 +25,14 @@ from .window import MainWindow, Server
 
 SERVER_NAME = f"journal-scope-{getpass.getuser()}"
 ICON = Path(__file__).resolve().parent.parent / "app" / "static" / "icon-512.png"
+
+
+def _http_bytes(url: str) -> bytes:
+    import urllib.request
+    from app.fetch import USER_AGENT
+    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Accept-Language": "en-GB,en;q=0.9"})
+    with urllib.request.urlopen(req, timeout=120) as resp:
+        return resp.read()
 
 
 def _signal_running_instance(show: bool) -> bool:
@@ -73,7 +81,9 @@ class Desktop:
         self.renderer = QtRenderer(data_dir, app)
         self.server = Server(self.db, self._status, self._on_local_change, renderer=self.renderer.submit)
         self.server.start()
-        self.engine = SyncEngine(self.db, self.settings, self._save_settings, self.server.lookup)
+        self.engine = SyncEngine(self.db, self.settings, self._save_settings, self.server.lookup,
+                                 get_bytes=_http_bytes, get_scimago=self._scimago_export,
+                                 tmp_dir=data_dir / "lists")
         self.sync = SyncController(self.engine)
 
         self.win = MainWindow(self.server.url, self.icon)
@@ -103,6 +113,28 @@ class Desktop:
     def _save_settings(self, s: dict) -> None:
         settings_mod.save(self.settings_path, s)
 
+    def _scimago_export(self) -> bytes:
+        """SCImago's export, fetched directly or, if Cloudflare asks, through the
+        embedded browser (where a human check can be completed)."""
+        try:
+            data = _http_bytes(reflists.SCIMAGO_EXPORT)
+            if b"Sourceid" in data[:2000]:
+                return data
+        except OSError:
+            pass
+        path = self.renderer.download(reflists.SCIMAGO_EXPORT, self.data_dir / "lists" / "scimago.csv").result(timeout=400)
+        return Path(path).read_bytes()
+
+    def refresh_lists_now(self) -> None:
+        if not self.engine.configured:
+            QMessageBox.information(self.win, "Journal Scope", "Turn on Phone sync first (Settings → Phone sync…).")
+            return
+        self.engine.force_lists = True
+        self.sync.kick()
+        QMessageBox.information(self.win, "Journal Scope",
+                                "Reloading the SCImago, CREST and SANLiC lists for the phone. This takes a minute or two; "
+                                "the status at the bottom left shows when it is done.")
+
     # ------------------------------------------------------- menu and tray
     def _app_link(self, action: str) -> None:
         """The Settings button in the window."""
@@ -115,6 +147,7 @@ class Desktop:
         menu = QMenu()
         menu.addAction("Open Journal Scope", self.win.show_and_raise)
         menu.addAction("Phone sync…", self.open_sync)
+        menu.addAction("Refresh phone lists now", self.refresh_lists_now)
         if winplatform.IS_WINDOWS:
             startup = QAction("Start with Windows", menu, checkable=True)
             startup.setChecked(winplatform.start_with_windows_enabled())

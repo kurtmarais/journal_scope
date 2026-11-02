@@ -41,8 +41,9 @@ class FetchFailed(Exception):
 
 
 class _Job:
-    def __init__(self, url: str, wait_for: str | None, wait_ms: int, future: Future):
+    def __init__(self, url: str, wait_for: str | None, wait_ms: int, future: Future, dest: Path | None = None):
         self.url, self.wait_for, self.wait_ms, self.future = url, wait_for, wait_ms, future
+        self.dest = dest                     # set for file downloads
         self.started = time.time()
         self.ready_since: float | None = None
         self.page: QWebEnginePage | None = None
@@ -68,11 +69,18 @@ class QtRenderer(QObject):
         self.profile.setHttpAcceptLanguage("en-GB,en;q=0.9")
         self._jobs: set[_Job] = set()
         self._submit.connect(self._start)
+        self.profile.downloadRequested.connect(self._on_download)
 
     # -------------------------------------------------------------- public
     def submit(self, url: str, wait_for: str | None = None, wait_ms: int = 15000) -> Future:
         fut: Future = Future()
         self._submit.emit(_Job(url, wait_for, wait_ms, fut))
+        return fut
+
+    def download(self, url: str, dest: Path) -> Future:
+        """Download a file through the embedded browser (resolves to `dest`)."""
+        fut: Future = Future()
+        self._submit.emit(_Job(url, None, 0, fut, dest=Path(dest)))
         return fut
 
     def shutdown(self) -> None:
@@ -84,7 +92,12 @@ class QtRenderer(QObject):
         self._jobs.add(job)
         job.page = QWebEnginePage(self.profile, self)
         job.page.load(QUrl(job.url))
-        ready = f"!!document.querySelector({json.dumps(job.wait_for)})" if job.wait_for else "document.readyState === 'complete'"
+        if job.dest is not None:
+            ready = "false"          # a download never becomes a page
+        elif job.wait_for:
+            ready = f"!!document.querySelector({json.dumps(job.wait_for)})"
+        else:
+            ready = "document.readyState === 'complete'"
         script = CHALLENGE_JS % ready
         job.timer = QTimer(self)
         job.timer.setInterval(400)
@@ -115,10 +128,33 @@ class QtRenderer(QObject):
             if elapsed > SHOW_CHECK_AFTER_S + HUMAN_CHECK_S:
                 self._finish(job, error=f"{job.url}: the site's 'are you human' check was not completed")
             return
+        if job.dest is not None:
+            if elapsed > 180:
+                self._finish(job, error=f"Download of {job.url} did not start")
+            return
         if elapsed * 1000 > job.wait_ms and st.get("loaded"):
             job.page.toHtml(lambda html: self._finish(job, html=html))   # return what loaded
         elif elapsed > 60:
             self._finish(job, error=f"Timed out loading {job.url}")
+
+    def _on_download(self, req) -> None:
+        job = next((j for j in self._jobs if j.dest is not None and j.page is req.page() and not j.done), None)
+        if job is None:
+            req.cancel()
+            return
+        job.dest.parent.mkdir(parents=True, exist_ok=True)
+        req.setDownloadDirectory(str(job.dest.parent))
+        req.setDownloadFileName(job.dest.name)
+        req.isFinishedChanged.connect(lambda: self._download_done(job, req))
+        req.accept()
+
+    def _download_done(self, job: _Job, req) -> None:
+        if not req.isFinished():
+            return
+        if req.state() == req.DownloadState.DownloadCompleted:
+            self._finish(job, html=str(job.dest))
+        else:
+            self._finish(job, error=f"Download failed: {req.interruptReasonString()}")
 
     def _show_check(self, job: _Job) -> None:
         host = QUrl(job.url).host()

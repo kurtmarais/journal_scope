@@ -34,3 +34,6 @@ button { font: inherit; cursor: pointer; }
 .mini .tag { margin: 0; font-size: .72rem; padding: 1px 6px; }
 .foot { color: var(--muted); font-size: .8rem; margin-top: 14px; }
 .report .glance { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+.secondary { border: 1px solid var(--accent); border-radius: 10px; padding: 10px 14px; background: var(--panel); color: var(--accent); font-weight: 600; }
+.actions { display: grid; gap: 8px; margin: 4px 0 8px; }
+.primary.wide { width: 100%; margin-top: 8px; }

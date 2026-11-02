@@ -2,7 +2,7 @@
 // Reads reports your PC has produced (synced through your Supabase project) and
 // queues new lookups, which the PC runs the next time it syncs.
 import { SUPABASE_KEY, SUPABASE_URL } from "./config.js";
-import { h, renderCandidates, renderReport } from "./report-view.js";
+import { h, normaliseIssn, normaliseTitle, quickReport, renderCandidates, renderReport } from "./report-view.js";
 import { AuthError, Supabase, SyncError } from "./supabase.js";
 
 const root = document.getElementById("root");
@@ -131,6 +131,61 @@ async function deleteReport(id) {
   render();
 }
 
+// ---------------------------------------------------------- phone search
+// Searches the lists the PC loads into Supabase. Runs entirely from the phone.
+async function quickSearch(query, site, sourceId = null) {
+  state.view = { name: "quick", query, site, loading: true };
+  render();
+  try {
+    const t = await token();
+    const api = sb();
+    const issn = normaliseIssn(query);
+    const lists = await api.select("ref_lists", {}, t);
+    let sj = null;
+    if (sourceId) {
+      sj = (await api.select("ref_scimago", { key: `eq.${sourceId}` }, t))[0] || null;
+    } else if (issn) {
+      sj = (await api.select("ref_scimago", { issns: `cs.{${issn}}`, limit: "1" }, t))[0] || null;
+    } else {
+      const norm = normaliseTitle(query);
+      const exact = await api.select("ref_scimago", { title_norm: `eq.${norm}`, limit: "5" }, t);
+      if (exact.length === 1) sj = exact[0];
+      else {
+        const like = exact.length ? exact : await api.select("ref_scimago",
+          { title_norm: `ilike.*${norm.replace(/[*,()]/g, " ")}*`, order: "sjr.desc.nullslast", limit: "15" }, t);
+        if (like.length === 1) sj = like[0];
+        else if (like.length > 1) {
+          state.view = { name: "quick", query, site, candidates: like.map((r) => ({ source_id: r.key, title: r.title, country: r.country, publisher: r.publisher })) };
+          render();
+          return;
+        }
+      }
+    }
+    const issns = sj ? sj.issns : issn ? [issn] : [];
+    const title = sj ? sj.title : issn ? null : query;
+    const set = `{${issns.join(",")}}`;
+    const inList = `(${issns.join(",")})`;
+    const [crestRows, sanlicRows] = await Promise.all([
+      issns.length ? api.select("ref_crest", { or: `(issn.in.${inList},eissn.in.${inList})`, limit: "1" }, t) : Promise.resolve([]),
+      issns.length ? api.select("ref_sanlic", { issns: `ov.${set}`, limit: "1" }, t) : Promise.resolve([]),
+    ]);
+    const norm = normaliseTitle(title);
+    const crest = crestRows[0] || (norm ? (await api.select("ref_crest", { title_norm: `eq.${norm}`, limit: "1" }, t))[0] : null) || null;
+    const sanlic = sanlicRows[0] || (norm ? (await api.select("ref_sanlic", { title_norm: `eq.${norm}`, limit: "1" }, t))[0] : null) || null;
+    const report = quickReport(query, { scimago: sj, crest, sanlic, lists, issns, title });
+    state.view = { name: "quick", query, site, report, sid: sj ? sj.key : null, listsLoaded: lists.length > 0 };
+  } catch (e) {
+    state.view = { name: "quick", query, site, error: e.message };
+  }
+  render();
+}
+
+function fullReportFor(issns) {
+  if (!issns || !issns.length) return null;
+  return Object.values(state.reports).filter((r) => (r.issns || []).some((i) => issns.includes(i)))
+    .sort((a, b) => b.created_at - a.created_at)[0] || null;
+}
+
 // ---------------------------------------------------------------- screens
 function setupScreen() {
   const url = h("input", { type: "url", placeholder: "https://<project>.supabase.co", value: state.conf.url });
@@ -209,8 +264,8 @@ function homeScreen() {
   renderList();
   return h("div", {},
     h("header", { class: "bar" }, h("h1", {}, "Journal Scope"), h("button", { class: "link", onclick: () => confirm("Sign out? Reports stay on the PC and in Supabase.") && signOut() }, "Sign out")),
-    h("form", { class: "ask", onsubmit: (e) => { e.preventDefault(); requestLookup(q.value.trim(), site.value.trim()); } },
-      q, site, h("button", { class: "primary" }, "Check on my PC")),
+    h("form", { class: "ask", onsubmit: (e) => { e.preventDefault(); quickSearch(q.value.trim(), site.value.trim()); } },
+      q, site, h("button", { class: "primary" }, "Check journal")),
     reqs.length > 0 && h("ul", { class: "requests" }, reqs.map(requestRow)),
     filterBox, list,
     h("p", { class: "foot" }, state.error ? h("span", { class: "err" }, state.error) : state.lastSync ? `Synced ${timeFmt(state.lastSync)}` : "Syncing…"));
@@ -246,6 +301,23 @@ function candidatesScreen(rid) {
   }));
 }
 
+function quickScreen(v) {
+  if (v.loading) return h("div", {}, backBar(), h("p", { class: "note" }, `Searching for “${v.query}”…`));
+  if (v.error) return h("div", {}, backBar(), h("p", { class: "err" }, "Search failed: " + v.error),
+    h("button", { class: "primary wide", onclick: () => requestLookup(v.query, v.site) }, "Check on my PC instead"));
+  if (v.candidates) return h("div", {}, backBar(), renderCandidates(v.query, v.candidates, (c) => quickSearch(v.query, v.site, c.source_id)));
+  const full = fullReportFor(v.report.identity.issns);
+  return h("div", {}, backBar(),
+    !v.listsLoaded && h("p", { class: "err" }, "The phone lists haven't been loaded yet. On the PC: Settings → Phone sync…, then Settings → Refresh phone lists now."),
+    h("div", { class: "actions" },
+      full && h("button", { class: "secondary", onclick: () => { state.view = { name: "report", uid: full.uid }; render(); window.scrollTo(0, 0); } },
+        `Open full report (${dateFmt(full.created_at)})`),
+      h("button", { class: "secondary", onclick: () => requestLookup(v.query, v.site, v.sid) },
+        full ? "Refresh full report on my PC" : "Get full report from my PC")),
+    h("p", { class: "note" }, "Instant check from the SCImago, CREST and SANLiC lists. The full report adds Kanalregister and the journal's own statistics; your PC runs it when it is on."),
+    renderReport(v.report));
+}
+
 function render() {
   let screen;
   if (!state.conf.url || !state.conf.key) screen = setupScreen();
@@ -253,6 +325,7 @@ function render() {
   else if (state.view.name === "report") screen = reportScreen(state.view.uid);
   else if (state.view.name === "waiting") screen = waitingScreen(state.view.request);
   else if (state.view.name === "candidates") screen = candidatesScreen(state.view.request);
+  else if (state.view.name === "quick") screen = quickScreen(state.view);
   else screen = homeScreen();
   const focused = document.activeElement && document.activeElement.name;
   const typed = focused && document.activeElement.value;

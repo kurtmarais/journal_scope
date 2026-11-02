@@ -36,7 +36,7 @@ const STATUS_CHIP = {
   found: ["Found", "good"],
   not_found: ["Not found", "warn"],
   error: ["Could not check", "bad"],
-  skipped: ["Skipped", "neutral"],
+  skipped: ["Not checked", "neutral"],
 };
 
 function when(iso) {
@@ -74,7 +74,7 @@ function scimagoCard(r) {
       ["Country", d.country],
       ["Type", d.publication_type],
       ["Subject areas", areas],
-      ["Links", join([link(d.homepage, "Journal homepage"), link(d.how_to_publish, "How to publish")])],
+      ["Links", join([d.homepage && link(d.homepage, "Journal homepage"), d.how_to_publish && link(d.how_to_publish, "How to publish")])],
     ]));
     if (d.notice) body.push(h("p", { class: "note" }, d.notice));
     if ((d.category_quartiles || []).length) {
@@ -210,4 +210,114 @@ export function renderCandidates(query, candidates, onPick) {
     h("ul", { class: "candidates" }, candidates.map((c) =>
       h("li", {}, h("button", { type: "button", onclick: () => onPick(c) },
         c.title, h("small", {}, [c.country, c.publisher].filter(Boolean).join(" · ")))))));
+}
+
+
+// ------------------------------------------------------------- phone lists
+// The phone searches reference lists the PC loads into Supabase (SCImago export,
+// CREST DHET list, SANLiC title list) and builds a report in the same shape as
+// the PC's, so renderReport() shows it.
+
+export function normaliseTitle(v) {
+  if (!v) return "";
+  let s = v.normalize("NFKD").replace(/[̀-ͯ]/g, "").toLowerCase();
+  s = s.replace(/&/g, " and ").replace(/,\s*the\s*$/, "").replace(/^the\s+/, "");
+  return s.replace(/[^a-z0-9]+/g, " ").replace(/\s+/g, " ").trim();
+}
+
+export function normaliseIssn(v) {
+  const m = /^\s*(\d{4})[-\s]?(\d{3}[\dXx])\s*$/.exec(v || "");
+  return m ? `${m[1]}-${m[2].toUpperCase()}` : null;
+}
+
+const SANLIC_PAGES = {
+  ELSEVIER: "sciencedirect-elsevier", "TAYLOR & FRANCIS": "taylor-francis", SPRINGER: "springer", WILEY: "wiley",
+  SAGE: "sage-publishing", OUP: "oxford-university-press-journals", CUP: "cambridge-university-press", EMERALD: "emerald",
+  BENTHAM: "bentham-science-publishers-2", ACS: "american-chemical-society-acs", ACM: "association-for-computing-machinery-acm",
+  IOP: "iopscience-extra", RSC: "royal-society-of-chemistry", AIP: "american-institute-of-physics-2",
+  "ROYAL SOCIETY": "royal-society", "THE COMPANY OF BIOLOGIST": "the-company-of-biologists",
+  "THE COMPANY OF BIOLOGISTS": "the-company-of-biologists",
+};
+
+const loadedNote = (meta) => meta ? `From the ${meta.version || "current"} list, loaded ${new Date(meta.refreshed_at).toLocaleDateString()}.` : null;
+
+function scimagoSource(r, meta) {
+  if (!r) return { status: "not_found", url: "https://www.scimagojr.com/", data: {},
+    note: "Not in SCImago's journal list, so not (or no longer) indexed in Scopus." };
+  const years = (r.coverage || "").match(/\b(19|20)\d{2}\b/g) || [];
+  const cats = (r.categories || "").split(";").map((c) => c.trim()).filter(Boolean).map((c) => {
+    const m = /^(.*?)\s*\((Q[1-4])\)$/.exec(c);
+    return { category: m ? m[1] : c, year: r.sjr_year, quartile: m ? m[2] : "-" };
+  });
+  return {
+    status: "found",
+    url: `https://www.scimagojr.com/journalsearch.php?q=${encodeURIComponent(r.key)}&tip=sid&clean=0`,
+    note: (loadedNote(meta) || "") + " Homepage and similar journals are on SCImago's page.",
+    data: {
+      title: r.title, country: r.country, publisher: r.publisher, issns: r.issns || [], publication_type: r.type,
+      sjr: r.sjr_year ? { year: r.sjr_year, value: r.sjr, best_quartile: r.sjr_quartile } : null,
+      h_index: r.h_index, coverage: r.coverage, coverage_last_year: years.length ? Math.max(...years.map(Number)) : null,
+      cites_per_doc_2y: r.cites_doc_2y != null ? [{ year: r.sjr_year, value: r.cites_doc_2y }] : [],
+      category_quartiles: cats,
+      subject_areas: (r.areas || "").split(";").map((a) => a.trim()).filter(Boolean).map((a) => ({ area: a, categories: [] })),
+    },
+  };
+}
+
+function crestSource(r, meta, title) {
+  const url = "https://db.crest.sun.ac.za/zapublications/";
+  if (!r) return { status: "not_found", url, data: { eligible: false },
+    note: "Not on the DHET-approved journal list, so articles are not eligible for subsidy. " + (loadedNote(meta) || "") };
+  const eligible = /eligible for subsidy|^active$/i.test(r.status || "");
+  return { status: "found", url, note: loadedNote(meta), data: {
+    title: r.title, publisher: r.publisher, issn: r.issn, eissn: r.eissn, journal_id: r.key,
+    status: r.status || "Listed", eligible, reason: r.reason } };
+}
+
+function sanlicSource(r, meta) {
+  const url = "https://sanlic.ac.za/read-and-publish-agreements/";
+  if (!r) return { status: "not_found", url, data: { included: false, title_list: meta && meta.source_url },
+    note: "Not on SANLiC's list of journals covered by R&P agreements; the APC is not covered by SANLiC. " + (loadedNote(meta) || "") };
+  const page = SANLIC_PAGES[(r.publisher || "").trim().toUpperCase()];
+  return { status: "found", url, note: loadedNote(meta), data: {
+    title: r.title, included: r.included, oa_type: r.oa_type, explanation: r.explanation, publisher: r.publisher,
+    agreement_page: page ? `https://sanlic.ac.za/${page}/` : null, title_list: meta && meta.source_url } };
+}
+
+export function quickReport(query, { scimago, crest, sanlic, lists, issns, title }) {
+  const meta = Object.fromEntries((lists || []).map((l) => [l.key, l]));
+  const sj = scimagoSource(scimago, meta.scimago);
+  const kanalTerm = (issns || [])[0] || title || query;
+  const sources = {
+    scimago: sj,
+    crest: crestSource(crest, meta.crest, title),
+    sanlic: sanlicSource(sanlic, meta.sanlic),
+    kanalregister: { status: "skipped", data: {},
+      url: `https://kanalregister.hkdir.no/en/sok?option=journals&input=${encodeURIComponent(kanalTerm)}`,
+      note: "Kanalregister builds its pages in a browser, so it is checked by your PC. Open it here, or get the full report from your PC." },
+    journal_site: { status: "skipped", data: {},
+      note: "Decision times, acceptance rate and APC come from the publisher's site, which your PC reads. Get the full report from your PC." },
+  };
+  const glance = [];
+  if (sj.status === "found") {
+    const d = sj.data;
+    glance.push({ label: "Indexed (Scopus via SCImago)", value: d.coverage ? `Coverage ${d.coverage}` : "Listed",
+      tone: d.coverage_last_year >= new Date().getFullYear() - 1 ? "good" : "warn", source: "scimago" });
+    if (d.sjr) glance.push({ label: `SJR ${d.sjr.year}`, value: d.sjr.value != null ? `${d.sjr.value.toFixed(3)}${d.sjr.best_quartile ? ` (${d.sjr.best_quartile})` : ""}` : (d.sjr.best_quartile || "-"),
+      tone: { Q1: "good", Q2: "good", Q3: "warn", Q4: "bad" }[d.sjr.best_quartile] || "neutral", source: "scimago" });
+    if (d.cites_per_doc_2y.length) glance.push({ label: `Cites/doc, 2 years (${d.cites_per_doc_2y[0].year})`, value: d.cites_per_doc_2y[0].value.toFixed(2), tone: "neutral", source: "scimago" });
+    if (d.h_index != null) glance.push({ label: "H-index", value: String(d.h_index), tone: "neutral", source: "scimago" });
+  } else {
+    glance.push({ label: "Indexed (Scopus via SCImago)", value: "Not found", tone: "bad", source: "scimago" });
+  }
+  const c = sources.crest;
+  glance.push(c.status === "found" ? { label: "DHET subsidy", value: c.data.status, tone: c.data.eligible ? "good" : "bad", source: "crest" }
+    : { label: "DHET subsidy", value: "Not on approved list", tone: "bad", source: "crest" });
+  const n = sources.sanlic;
+  glance.push(n.status === "found" ? { label: "SANLiC APC agreement", value: (n.data.included ? "Covered" : "Not covered") + (n.data.oa_type ? ` (${n.data.oa_type})` : ""), tone: n.data.included ? "good" : "warn", source: "sanlic" }
+    : { label: "SANLiC APC agreement", value: "Not covered", tone: "warn", source: "sanlic" });
+  return {
+    query, quick: true, candidates: [], glance, sources,
+    identity: { title: title || query, issns: issns || [], publisher: sj.data.publisher || (c.data && c.data.publisher), country: sj.data.country },
+  };
 }
