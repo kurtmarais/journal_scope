@@ -1,4 +1,5 @@
 import { h, renderReport, renderCandidates } from "/web/report-view.js";
+import { discover, renderDiscover } from "/web/discover.js";
 
 const $ = (sel) => document.querySelector(sel);
 let current = null;
@@ -100,6 +101,44 @@ async function refreshStatus() {
 $("#search").addEventListener("submit", (e) => {
   e.preventDefault();
   run({ q: $("#q").value.trim(), site: $("#site").value.trim() });
+});
+
+// ---------------------------------------------------------- find journals
+async function getJSON(url, options) {
+  const res = await fetch(url, options);
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.detail || `HTTP ${res.status}`);
+  return body;
+}
+
+const provider = {
+  openalex: (mode, q) => getJSON(`/api/discover/openalex?${new URLSearchParams({ mode, q })}`),
+  doaj: (mode, q) => getJSON(`/api/discover/doaj?${new URLSearchParams({ mode, q })}`),
+  scopus: (q) => getJSON(`/api/discover/scopus?${new URLSearchParams({ mode: "scope", q })}`),
+  crestSearch: (q) => getJSON(`/api/discover/crest?${new URLSearchParams({ mode: "title", q })}`),
+  refmatch: (issns, titles) => getJSON("/api/refmatch", { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ issns, titles }) }),
+};
+
+$("#find").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const q = $("#fq").value.trim();
+  const mode = $("#fmode").value;
+  $("#fgo").disabled = true;
+  $("#out").replaceChildren();
+  setStatus(mode === "scope" ? "Finding journals that publish on this topic…" : "Finding journals with these words in their titles…");
+  try {
+    const result = await discover(mode, q, provider);
+    setStatus("");
+    $("#out").replaceChildren(renderDiscover(result, (rec) => {
+      $("#q").value = rec.issns[0] || rec.title;
+      run({ q: rec.issns[0] || rec.title });
+    }));
+  } catch (err) {
+    setStatus("Search failed: " + err.message, true);
+  } finally {
+    $("#fgo").disabled = false;
+  }
 });
 
 window.journalScope = { refreshHistory };

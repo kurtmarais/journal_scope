@@ -37,3 +37,5 @@ button { font: inherit; cursor: pointer; }
 .secondary { border: 1px solid var(--accent); border-radius: 10px; padding: 10px 14px; background: var(--panel); color: var(--accent); font-weight: 600; }
 .actions { display: grid; gap: 8px; margin: 4px 0 8px; }
 .primary.wide { width: 100%; margin-top: 8px; }
+.ask.find { border-top: 1px solid var(--line); padding-top: 12px; }
+select.mode { font: inherit; font-size: 16px; color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; width: 100%; }

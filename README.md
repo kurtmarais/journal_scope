@@ -10,6 +10,12 @@ Checks a journal's validity and credibility for publication by pulling, in one r
 | Journal website | Days to first decision / decision after review / acceptance / publication, acceptance rate, APC, impact factor as reported by the journal |
 | [SANLiC](https://sanlic.ac.za/read-and-publish-agreements/) | Whether a SANLiC read-and-publish agreement covers the journal, OA model, explanation, agreement period |
 
+**Find journals** (the second search bar) lists journals for a keyword, each with its DHET (CREST) and SANLiC status, OpenAlex citation figures, and the APC and weeks to publication from DOAJ for open-access journals:
+- **Titles:** journals whose titles contain the words (OpenAlex, DOAJ, the CREST list).
+- **Scope:** journals that published the most papers on the topic in the last five years (OpenAlex, Scopus), plus DOAJ journals whose keywords or subjects match. Scopus's part needs your institution's access.
+
+Click a journal to run its full check. OpenAlex works without a key but then shares a small daily allowance with everyone on your network; a free key from [openalex.org/settings/api](https://openalex.org/settings/api) (Settings → API keys) gives you your own.
+
 Values are copied as each source states them, with a link back (and, for the journal site, the sentence each value was read from). Nothing is scored or combined.
 
 It comes in two parts, set up like Sidebar:
@@ -37,7 +43,7 @@ py -m pip install --user -r requirements.txt
 pyw run_journal_scope.py
 ```
 
-Then open **⚙ Settings** (bottom left of the window) → **Scopus API key…** and paste a free key from [dev.elsevier.com](https://dev.elsevier.com/apikey/manage). CiteScore quartiles need your institution's access, which works automatically on the university network or VPN; elsewhere, ask the library for an institution token. Without a key the other sources still run.
+Then open **⚙ Settings** (bottom left of the window) → **API keys (Scopus, OpenAlex)…** and paste a free key from [dev.elsevier.com](https://dev.elsevier.com/apikey/manage). CiteScore quartiles need your institution's access, which works automatically on the university network or VPN; elsewhere, ask the library for an institution token. Without a key the other sources still run.
 
 Also in ⚙ **Settings** (or the tray icon), or right-click the tray icon (Windows may tuck it under the **^** by the clock). Closing the window quits the app:
 - **Phone sync…** connects the phone app (see [docs/phone-setup.md](docs/phone-setup.md)).

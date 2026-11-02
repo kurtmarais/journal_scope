@@ -13,11 +13,13 @@ import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import Body, FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from . import discover
 from .fetch import Fetcher
+from .lists import LocalLists
 from .paths import default_data_dir
 from .report import build_report, partial_report
 from .storage import Database
@@ -34,6 +36,7 @@ async def lifespan(app: FastAPI):
     app.state.loop = asyncio.get_running_loop()
     if getattr(app.state, "db", None) is None:
         app.state.db = Database(default_data_dir() / "journal_scope.db")
+    app.state.lists = LocalLists(app.state.fetcher, getattr(app.state, "lists_dir", None) or default_data_dir() / "lists")
     yield
     await app.state.fetcher.close()
 
@@ -42,6 +45,7 @@ app = FastAPI(title="Journal Scope", lifespan=lifespan)
 app.state.db = None
 app.state.renderer = None        # the desktop app's Qt WebEngine renderer
 app.state.scopus_credentials = lambda: (None, None)   # (API key, institution token); desktop settings
+app.state.openalex_key = lambda: None                 # optional OpenAlex API key; desktop settings
 app.state.status = lambda: {}          # replaced by the desktop app (sync status)
 app.state.on_report = lambda uid: None  # replaced by the desktop app (trigger a sync)
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
@@ -119,6 +123,38 @@ async def progress():
         return {"states": {}, "report": None}
     report = partial_report(p["query"], dict(p["results"])) if p["results"] else None
     return {"states": dict(p["states"]), "report": report}
+
+
+# ------------------------------------------------------------ journal search
+@app.get("/api/discover/{source}")
+async def discover_source(source: str, q: str = Query(..., min_length=2), mode: str = Query("title")):
+    if mode not in ("title", "scope"):
+        raise HTTPException(400, "mode must be title or scope")
+    try:
+        if source == "openalex":
+            return await discover.openalex(app.state.fetcher, mode, q, app.state.openalex_key())
+        if source == "doaj":
+            return await discover.doaj(app.state.fetcher, mode, q)
+        if source == "scopus":
+            key, token = app.state.scopus_credentials()
+            return await discover.scopus_scope(app.state.fetcher, q, key, token)
+        if source == "crest":
+            await app.state.lists.ensure()
+            if not app.state.lists.crest and "crest" in app.state.lists.errors:
+                raise discover.DiscoverError(app.state.lists.errors["crest"])
+            return {"results": app.state.lists.search_crest(q)}
+    except discover.DiscoverError as exc:
+        raise HTTPException(502, str(exc))
+    raise HTTPException(404, "unknown source")
+
+
+@app.post("/api/refmatch")
+async def refmatch(body: dict = Body(...)):
+    """DHET (CREST) and SANLiC entries for the given ISSNs/titles, from the local lists."""
+    await app.state.lists.ensure()
+    issns = [str(i) for i in body.get("issns", [])][:500]
+    titles = [str(t) for t in body.get("titles", [])][:200]
+    return {**app.state.lists.match(issns, titles), "errors": app.state.lists.errors}
 
 
 @app.get("/api/status")

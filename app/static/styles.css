@@ -37,3 +37,8 @@ button#go:disabled { opacity: .6; cursor: progress; }
 .status.error { background: var(--bad-bg); color: var(--bad-ink); }
 .foot { color: var(--muted); font-size: .78rem; }
 @media (max-width: 760px) { .side { display: none; } }
+.find { margin-top: 4px; padding-top: 10px; border-top: 1px solid var(--line); }
+.field.mode { min-width: 240px; }
+select { font: inherit; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+.secondary-btn { font: inherit; font-weight: 600; border: 1px solid var(--accent); border-radius: 8px; padding: 8px 16px; background: var(--panel); color: var(--accent); cursor: pointer; }
+.secondary-btn:disabled { opacity: .6; cursor: progress; }

@@ -1,0 +1,23 @@
+{
+ "search-results": {
+  "opensearch:totalResults": "5321",
+  "facet": {
+   "attribute": "exactsrctitle",
+   "name": "exactsrctitle",
+   "category": [
+    {
+     "name": "Journal Of Biomedical Informatics",
+     "hitCount": "210",
+     "label": "Journal Of Biomedical Informatics",
+     "value": "Journal Of Biomedical Informatics"
+    },
+    {
+     "name": "Jmir Medical Informatics",
+     "hitCount": "150",
+     "label": "Jmir Medical Informatics",
+     "value": "Jmir Medical Informatics"
+    }
+   ]
+  }
+ }
+}

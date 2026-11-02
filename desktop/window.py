@@ -31,9 +31,10 @@ class Server:
     thread, so the window can appear while it loads.
     """
 
-    def __init__(self, db, status, on_report, renderer=None, scopus_credentials=None):
+    def __init__(self, db, status, on_report, renderer=None, scopus_credentials=None, openalex_key=None, lists_dir=None):
         self._hooks = dict(db=db, status=status, on_report=on_report, renderer=renderer,
-                           scopus_credentials=scopus_credentials or (lambda: (None, None)))
+                           scopus_credentials=scopus_credentials or (lambda: (None, None)),
+                           openalex_key=openalex_key or (lambda: None), lists_dir=lists_dir)
         self.port = _free_port()
         self.url = f"http://127.0.0.1:{self.port}/"
         self.ready = threading.Event()

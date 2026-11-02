@@ -66,3 +66,20 @@ ul.similar li { margin: 0 0 4px; break-inside: avoid; }
   table.metrics tr { display: block; padding: 6px 0; border-bottom: 1px solid var(--line); }
   table.metrics td { display: block; border: 0; padding: 2px 0; }
 }
+
+/* Find journals */
+.discover .d-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 8px 16px; margin: 8px 0; }
+.discover h2 { font-size: 1.1rem; margin: 0; }
+.d-controls { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; font-size: .85rem; }
+.d-controls select { font: inherit; color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 4px 8px; }
+label.check { display: inline-flex; flex-direction: row; gap: 5px; align-items: center; color: var(--ink); font-size: .85rem; }
+label.check input { width: auto; }
+.d-list { list-style: none; padding: 0; margin: 0 0 10px; display: grid; gap: 8px; }
+.d-item { width: 100%; text-align: left; font: inherit; color: var(--ink); background: var(--panel); border: 1px solid var(--line);
+  border-radius: 10px; padding: 10px 12px; display: grid; gap: 3px; cursor: pointer; }
+.d-item:hover { border-color: var(--accent); }
+.d-item b { font-weight: 650; word-break: break-word; }
+.d-item small, .d-meta { color: var(--muted); font-size: .82rem; }
+.d-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.d-chips .tag { margin: 0; font-size: .72rem; padding: 1px 6px; }
+.tag.src { background: transparent; border: 1px solid var(--line); color: var(--muted); }

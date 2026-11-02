@@ -77,10 +77,10 @@ def _since_start() -> str:
     return f"{time.time() - T0:.1f}s"
 
 
-class ScopusKeyDialog(QDialog):
+class ApiKeysDialog(QDialog):
     def __init__(self, settings: dict, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Scopus API key")
+        self.setWindowTitle("API keys")
         self.setMinimumWidth(480)
         lay = QVBoxLayout(self)
         intro = QLabel('Scopus and CiteScore come from Elsevier\'s API. Get a free key at '
@@ -94,9 +94,20 @@ class ScopusKeyDialog(QDialog):
         self.key = QLineEdit(unprotect_token(settings.get("scopus_key", "")))
         self.token = QLineEdit(unprotect_token(settings.get("scopus_token", "")))
         self.token.setPlaceholderText("optional")
-        form.addRow("API key", self.key)
+        form.addRow("Elsevier API key", self.key)
         form.addRow("Institution token", self.token)
         lay.addLayout(form)
+        oa = QLabel('OpenAlex (journal search) works without a key, but then shares a small daily allowance with '
+                    'everyone on your network. A free key at <a href="https://openalex.org/settings/api">openalex.org/settings/api</a> '
+                    "gives you your own.")
+        oa.setWordWrap(True)
+        oa.setOpenExternalLinks(True)
+        lay.addWidget(oa)
+        form2 = QFormLayout()
+        self.openalex = QLineEdit(unprotect_token(settings.get("openalex_key", "")))
+        self.openalex.setPlaceholderText("optional")
+        form2.addRow("OpenAlex API key", self.openalex)
+        lay.addLayout(form2)
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
@@ -116,7 +127,9 @@ class Desktop:
         self.log = data_dir / "launch.log"
         self.renderer = QtRenderer(data_dir, app)
         self.server = Server(self.db, self._status, self._on_local_change, renderer=self.renderer.submit,
-                             scopus_credentials=self._scopus_credentials)
+                             scopus_credentials=self._scopus_credentials,
+                             openalex_key=lambda: unprotect_token(self.settings.get("openalex_key", "")) or None,
+                             lists_dir=data_dir / "lists")
         self.server.start()                     # loads in the background
         self.engine = SyncEngine(self.db, self.settings, self._save_settings, self.server.lookup,
                                  get_bytes=_http_bytes, tmp_dir=data_dir / "lists")
@@ -165,11 +178,11 @@ class Desktop:
 
     def open_scopus_key(self) -> None:
         self.win.show_and_raise()
-        dlg = ScopusKeyDialog(self.settings, self.win)
+        dlg = ApiKeysDialog(self.settings, self.win)
         if dlg.exec() == QDialog.DialogCode.Accepted:
-            key, token = dlg.key.text().strip(), dlg.token.text().strip()
-            self.settings["scopus_key"] = protect_token(key) if key else ""
-            self.settings["scopus_token"] = protect_token(token) if token else ""
+            for field, name in ((dlg.key, "scopus_key"), (dlg.token, "scopus_token"), (dlg.openalex, "openalex_key")):
+                value = field.text().strip()
+                self.settings[name] = protect_token(value) if value else ""
             self._save_settings(self.settings)
 
     def refresh_lists_now(self) -> None:
@@ -193,7 +206,7 @@ class Desktop:
     def _build_menu(self) -> QMenu:
         menu = QMenu()
         menu.addAction("Open Journal Scope", self.win.show_and_raise)
-        menu.addAction("Scopus API key…", self.open_scopus_key)
+        menu.addAction("API keys (Scopus, OpenAlex)…", self.open_scopus_key)
         menu.addAction("Phone sync…", self.open_sync)
         menu.addAction("Refresh phone lists now", self.refresh_lists_now)
         if winplatform.IS_WINDOWS:

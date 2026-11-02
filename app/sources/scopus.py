@@ -151,7 +151,7 @@ def _error_text(status: int, body: dict) -> str:
     err = body.get("service-error", {}).get("status", {}) if isinstance(body, dict) else {}
     detail = err.get("statusText") or err.get("statusCode") or ""
     if status == 401:
-        return f"Elsevier rejected the API key ({detail or 'authentication error'}). Check it in Settings → Scopus API key."
+        return f"Elsevier rejected the API key ({detail or 'authentication error'}). Check it in Settings → API keys."
     if status == 403:
         return f"Elsevier refused access ({detail or 'not entitled'})."
     if status == 429:
@@ -189,7 +189,7 @@ async def lookup(fetcher: Fetcher, query: str, issn: str | None, source_id: str 
     token = token or os.environ.get("ELSEVIER_INSTTOKEN")
     if not key:
         return source_result(NAME, SKIPPED, SOURCES_PAGE,
-                             note="Add your free Elsevier API key (Settings → Scopus API key) to check Scopus and CiteScore."), []
+                             note="Add your free Elsevier API key (Settings → API keys) to check Scopus and CiteScore."), []
     try:
         target = source_id or issn
         if not target:

@@ -33,6 +33,20 @@
       </label>
       <button type="submit" id="go">Check journal</button>
     </form>
+    <form id="find" autocomplete="off" class="find">
+      <label class="field grow">
+        <span>Find journals by keyword</span>
+        <input id="fq" name="fq" required minlength="2" placeholder="e.g. health informatics">
+      </label>
+      <label class="field mode">
+        <span>Search</span>
+        <select id="fmode">
+          <option value="title">Titles (OpenAlex, DOAJ, CREST)</option>
+          <option value="scope">Scope: what they publish (OpenAlex, Scopus, DOAJ)</option>
+        </select>
+      </label>
+      <button type="submit" id="fgo" class="secondary-btn">Find journals</button>
+    </form>
     <div id="status" class="status" hidden></div>
     <section id="out"></section>
     <p class="foot">Values are copied from each source as published there; follow the links to verify. Nothing is scored or inferred.</p>

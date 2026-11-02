@@ -4,6 +4,7 @@
 import { SUPABASE_KEY, SUPABASE_URL } from "./config.js";
 import { h, normaliseIssn, normaliseTitle, parseScopusEntry, quickReport, renderCandidates, renderReport, scopusCandidates, scopusEntries } from "./report-view.js";
 import { AuthError, Supabase, SyncError } from "./supabase.js";
+import { discover, renderDiscover } from "./discover.js";
 
 const root = document.getElementById("root");
 const LS = {
@@ -187,6 +188,64 @@ async function quickSearch(query, site, sourceId = null) {
   render();
 }
 
+// ---------------------------------------------------------- find journals
+function phoneProvider(api, t) {
+  const fn = (params) => api.request("GET", "/functions/v1/discover", { token: t, params });
+  const chunks = (arr, n) => Array.from({ length: Math.ceil(arr.length / n) }, (_, i) => arr.slice(i * n, i * n + n));
+  return {
+    openalex: (mode, q) => fn({ source: "openalex", mode, q }),
+    doaj: (mode, q) => fn({ source: "doaj", mode, q }),
+    scopus: (q) => fn({ source: "scopus", mode: "scope", q }),
+    async crestSearch(q) {
+      const words = normaliseTitle(q).split(" ").filter((w) => w.length > 1);
+      if (!words.length) return { results: [] };
+      const rows = await api.select("ref_crest", { and: `(${words.map((w) => `title_norm.ilike.*${w}*`).join(",")})`, limit: "50" }, t);
+      return { results: rows };
+    },
+    async refmatch(issns, titles) {
+      const crest = [], sanlic = [];
+      for (const part of chunks(issns, 40)) {
+        const list = `(${part.join(",")})`;
+        crest.push(...await api.select("ref_crest", { or: `(issn.in.${list},eissn.in.${list})` }, t));
+        sanlic.push(...await api.select("ref_sanlic", { issns: `ov.{${part.join(",")}}` }, t));
+      }
+      const names = titles.map(normaliseTitle).filter(Boolean);
+      for (const part of chunks(names, 20)) {
+        const list = `(${part.map((n) => `"${n}"`).join(",")})`;
+        crest.push(...await api.select("ref_crest", { title_norm: `in.${list}` }, t));
+        sanlic.push(...await api.select("ref_sanlic", { title_norm: `in.${list}` }, t));
+      }
+      const lists = await api.select("ref_lists", {}, t);
+      const errors = {};
+      for (const k of ["crest", "sanlic"]) if (!lists.some((l) => l.key === k)) errors[k] = "list not loaded yet";
+      return { crest, sanlic, errors };
+    },
+  };
+}
+
+async function findJournals(query, mode) {
+  state.view = { name: "discover", query, mode, loading: true };
+  render();
+  try {
+    const t = await token();
+    const result = await discover(mode, query, phoneProvider(sb(), t));
+    state.view = { name: "discover", query, mode, result, opts: { sort: "relevance", dhet: false, sanlic: false, oa: false } };
+  } catch (e) {
+    state.view = { name: "discover", query, mode, error: e.message };
+  }
+  render();
+}
+
+function discoverScreen(v) {
+  if (v.loading) return h("div", {}, backBar(), h("p", { class: "note" },
+    v.mode === "scope" ? `Finding journals that publish on “${v.query}”…` : `Finding journals with “${v.query}” in their titles…`));
+  if (v.error) return h("div", {}, backBar(), h("p", { class: "err" }, "Search failed: " + v.error));
+  return h("div", {}, backBar(), renderDiscover(v.result, (rec) => {
+    state.back = v;                       // ‹ Back returns to these results
+    quickSearch(rec.issns[0] || rec.title, "");
+  }, v.opts));
+}
+
 function fullReportFor(issns) {
   if (!issns || !issns.length) return null;
   return Object.values(state.reports).filter((r) => (r.issns || []).some((i) => issns.includes(i)))
@@ -272,15 +331,31 @@ function homeScreen() {
   renderList();
   return h("div", {},
     h("header", { class: "bar" }, h("h1", {}, "Journal Scope"), h("button", { class: "link", onclick: () => confirm("Sign out? Reports stay on the PC and in Supabase.") && signOut() }, "Sign out")),
-    h("form", { class: "ask", onsubmit: (e) => { e.preventDefault(); quickSearch(q.value.trim(), site.value.trim()); } },
+    h("form", { class: "ask", onsubmit: (e) => { e.preventDefault(); state.back = null; quickSearch(q.value.trim(), site.value.trim()); } },
       q, site, h("button", { class: "primary" }, "Check journal")),
+    findForm(),
     reqs.length > 0 && h("ul", { class: "requests" }, reqs.map(requestRow)),
     filterBox, list,
     h("p", { class: "foot" }, state.error ? h("span", { class: "err" }, state.error) : state.lastSync ? `Synced ${timeFmt(state.lastSync)}` : "Syncing…"));
 }
 
+function findForm() {
+  const fq = h("input", { name: "fq", placeholder: "Find journals by keyword", required: true, minlength: "2", enterkeyhint: "search", autocapitalize: "off" });
+  const mode = h("select", { name: "fmode", class: "mode" },
+    h("option", { value: "title" }, "In titles (OpenAlex, DOAJ, CREST)"),
+    h("option", { value: "scope" }, "By scope: what they publish (OpenAlex, Scopus, DOAJ)"));
+  return h("form", { class: "ask find", onsubmit: (e) => { e.preventDefault(); findJournals(fq.value.trim(), mode.value); } },
+    fq, mode, h("button", { class: "secondary" }, "Find journals"));
+}
+
 function backBar(title) {
-  return h("header", { class: "bar" }, h("button", { class: "link back", onclick: () => { state.view = { name: "home" }; render(); } }, "‹ Back"), h("span", { class: "bar-title" }, title || ""));
+  const back = () => {
+    const prev = state.back;
+    state.back = null;
+    state.view = prev && state.view.name !== "discover" ? prev : { name: "home" };
+    render();
+  };
+  return h("header", { class: "bar" }, h("button", { class: "link back", onclick: back }, "‹ Back"), h("span", { class: "bar-title" }, title || ""));
 }
 
 function reportScreen(id) {
@@ -334,6 +409,7 @@ function render() {
   else if (state.view.name === "waiting") screen = waitingScreen(state.view.request);
   else if (state.view.name === "candidates") screen = candidatesScreen(state.view.request);
   else if (state.view.name === "quick") screen = quickScreen(state.view);
+  else if (state.view.name === "discover") screen = discoverScreen(state.view);
   else screen = homeScreen();
   const focused = document.activeElement && document.activeElement.name;
   const typed = focused && document.activeElement.value;

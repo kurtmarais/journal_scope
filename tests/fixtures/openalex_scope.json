@@ -1,0 +1,67 @@
+{
+ "groups": [
+  {
+   "key": "https://openalex.org/S4210203445",
+   "key_display_name": "Journal of Biomedical Informatics",
+   "count": 320
+  },
+  {
+   "key": "https://openalex.org/S2495854775",
+   "key_display_name": "IEEE Journal of Biomedical and Health Informatics",
+   "count": 280
+  },
+  {
+   "key": "https://openalex.org/S999",
+   "key_display_name": "Informatics in Medicine Unlocked",
+   "count": 90
+  }
+ ],
+ "sources": [
+  {
+   "id": "https://openalex.org/S4210203445",
+   "display_name": "Journal of Biomedical Informatics",
+   "issn_l": "1532-0464",
+   "issn": [
+    "1532-0464",
+    "1532-0480"
+   ],
+   "host_organization_name": "Elsevier BV",
+   "works_count": 4500,
+   "summary_stats": {
+    "2yr_mean_citedness": 5.4,
+    "h_index": 145
+   },
+   "is_oa": false,
+   "is_in_doaj": false,
+   "apc_usd": 3550,
+   "homepage_url": "https://www.journals.elsevier.com/journal-of-biomedical-informatics",
+   "country_code": "US",
+   "type": "journal",
+   "relevance_score": 900.0
+  },
+  {
+   "id": "https://openalex.org/S2495854775",
+   "display_name": "IEEE Journal of Biomedical and Health Informatics",
+   "issn_l": "2168-2194",
+   "issn": [
+    "2168-2194",
+    "2168-2208"
+   ],
+   "host_organization_name": "Institute of Electrical and Electronics Engineers",
+   "works_count": 6870,
+   "summary_stats": {
+    "2yr_mean_citedness": 6.133785230110596,
+    "h_index": 167,
+    "i10_index": 3549
+   },
+   "is_oa": false,
+   "is_in_doaj": false,
+   "apc_usd": 2645,
+   "homepage_url": "http://ieeexplore.ieee.org/xpl/RecentIssue.jsp?punumber=6221020",
+   "country_code": "US",
+   "type": "journal",
+   "relevance_score": 21336.094
+  }
+ ],
+ "since": "2021-01-01"
+}

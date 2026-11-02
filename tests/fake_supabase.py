@@ -79,6 +79,10 @@ class FakeSupabase:
                     self.refresh.discard(data["refresh_token"])
                     return 200, self._session()
                 return 400, {"error_description": "Invalid Refresh Token"}
+            if parts.path == "/functions/v1/discover":
+                if h.get("authorization", "").removeprefix("Bearer ") not in self.access:
+                    return 401, {"message": "Invalid JWT"}
+                return self.discover(q)
             if parts.path == "/functions/v1/scopus":
                 if h.get("authorization", "").removeprefix("Bearer ") not in self.access:
                     return 401, {"message": "Invalid JWT"}
@@ -132,6 +136,19 @@ class FakeSupabase:
             return 200, {"serial-metadata-response": {"entry": entries}}
         return 200, {"serial-metadata-response": {"entry": []}}
 
+    def discover(self, q: dict) -> tuple[int, object]:
+        """Stand-in for the 'discover' Edge Function."""
+        from pathlib import Path
+        fix = Path(__file__).parent / "fixtures"
+        self.discover_calls = getattr(self, "discover_calls", []) + [dict(q)]
+        if q.get("source") == "openalex":
+            return 200, json.loads((fix / ("openalex_scope.json" if q.get("mode") == "scope" else "openalex_title.json")).read_text())
+        if q.get("source") == "doaj":
+            return 200, json.loads((fix / "doaj_search.json").read_text())
+        if q.get("source") == "scopus":
+            return 502, {"error": "Scopus search needs your institution's access (an institution token)"}
+        return 404, {"error": "unknown source"}
+
     @staticmethod
     def _split(text: str) -> list[str]:
         """Split 'a.eq.1,b.in.(x,y)' on top-level commas."""
@@ -156,7 +173,7 @@ class FakeSupabase:
         if op == "gt":
             return v is not None and str(v) > val
         if op == "in":
-            return str(v) in val.strip("()").split(",")
+            return str(v) in [x.strip('"') for x in val.strip("()").split(",")]
         if op in ("cs", "ov"):
             want = [x for x in val.strip("{}").split(",") if x]
             have = v or []
@@ -170,7 +187,12 @@ class FakeSupabase:
     @classmethod
     def _match(cls, row: dict, filters: dict) -> bool:
         for col, cond in filters.items():
-            if col == "or":
+            if col == "and":
+                for part in cls._split(cond.strip()[1:-1]):
+                    c, _, rest = part.partition(".")
+                    if not cls._cond(row.get(c), rest):
+                        return False
+            elif col == "or":
                 ok = False
                 for part in cls._split(cond.strip()[1:-1]):
                     c, _, rest = part.partition(".")
