@@ -68,7 +68,7 @@ async def run_lookup(q: str, sid: str | None = None, site: str | None = None) ->
             results[k] = result
 
     return await build_report(app.state.fetcher, q, source_id=sid, site_url=site, scopus_key=key, scopus_token=token,
-                              progress=on_progress)
+                              progress=on_progress, openalex_key=app.state.openalex_key())
 
 
 @app.get("/")
@@ -93,7 +93,13 @@ async def report(
     if not rep.get("candidates"):
         rep["uid"] = app.state.db.add_report(rep)
         app.state.on_report(rep["uid"])
+        rep["saved"] = _saved_uid(rep)
     return rep
+
+
+def _saved_uid(rep: dict) -> str | None:
+    ident = rep.get("identity") or {}
+    return app.state.db.find_saved(ident.get("issns") or [], ident.get("title"))
 
 
 @app.get("/api/history")
@@ -106,7 +112,38 @@ async def history_item(uid: str):
     rep = app.state.db.get_report(uid)
     if rep is None:
         raise HTTPException(404, "Report not found.")
+    rep["saved"] = _saved_uid(rep)
     return rep
+
+
+# ------------------------------------------------------------ saved journals
+@app.get("/api/saved")
+async def saved_list():
+    return app.state.db.list_saved()
+
+
+@app.get("/api/saved/{uid}")
+async def saved_item(uid: str):
+    item = app.state.db.get_saved(uid)
+    if item is None:
+        raise HTTPException(404, "Not in your saved journals.")
+    return item
+
+
+@app.post("/api/saved")
+async def saved_add(report: dict = Body(...)):
+    if not (report.get("identity") or {}).get("title") and not report.get("query"):
+        raise HTTPException(400, "Nothing to save.")
+    uid = app.state.db.save_journal(report)
+    app.state.on_report(uid)
+    return {"uid": uid}
+
+
+@app.delete("/api/saved/{uid}")
+async def saved_remove(uid: str):
+    app.state.db.unsave(uid)
+    app.state.on_report(uid)
+    return {"ok": True}
 
 
 @app.delete("/api/history/{uid}")
@@ -128,8 +165,8 @@ async def progress():
 # ------------------------------------------------------------ journal search
 @app.get("/api/discover/{source}")
 async def discover_source(source: str, q: str = Query(..., min_length=2), mode: str = Query("title")):
-    if mode not in ("title", "scope"):
-        raise HTTPException(400, "mode must be title or scope")
+    if mode not in ("title", "scope", "issn"):
+        raise HTTPException(400, "mode must be title, scope or issn")
     try:
         if source == "openalex":
             return await discover.openalex(app.state.fetcher, mode, q, app.state.openalex_key())

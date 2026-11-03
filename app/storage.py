@@ -14,6 +14,8 @@ import uuid
 from contextlib import contextmanager
 from pathlib import Path
 
+from .util import journal_key, normalise_title
+
 SCHEMA = """
 create table if not exists reports (
     uid        text primary key,
@@ -28,6 +30,16 @@ create table if not exists reports (
 );
 create index if not exists reports_recent on reports (deleted, created_at);
 create table if not exists meta (key text primary key, value text);
+create table if not exists saved (
+    uid        text primary key,
+    title      text not null default '',
+    issns      text not null default '[]',
+    report     text not null default '{}',
+    deleted    integer not null default 0,
+    dirty      integer not null default 1,
+    created_at real not null,
+    updated_at real not null
+);
 """
 
 
@@ -62,6 +74,7 @@ class Database:
                 (uid, report.get("query", ""), ident.get("title") or report.get("query", ""),
                  json.dumps(ident.get("issns") or []), json.dumps(report), now, now),
             )
+        self.refresh_saved(report)   # a starred journal keeps its newest full report
         return uid
 
     def list_reports(self, limit: int = 200) -> list[dict]:
@@ -119,6 +132,76 @@ class Database:
                  json.dumps(row.get("report") or {}), 1 if row.get("deleted") else 0,
                  row.get("created_at") or row["updated_at"], row["updated_at"]),
             )
+        return True
+
+    # ------------------------------------------------------- saved journals
+    def find_saved(self, issns: list[str], title: str | None = None) -> str | None:
+        want = set(issns or [])
+        tnorm = normalise_title(title)
+        with self._conn() as c:
+            rows = c.execute("select uid, title, issns from saved where deleted = 0").fetchall()
+        for r in rows:
+            if want & set(json.loads(r["issns"])) or (not want and tnorm and normalise_title(r["title"]) == tnorm):
+                return r["uid"]
+        return None
+
+    def save_journal(self, report: dict) -> str:
+        """Star a journal (or refresh its saved report). Returns its key."""
+        ident = report.get("identity") or {}
+        uid = self.find_saved(ident.get("issns") or [], ident.get("title")) or journal_key(report)
+        now = time.time()
+        rep = {k: v for k, v in report.items() if k not in ("uid",)}
+        with self._conn() as c:
+            cur = c.execute("select created_at from saved where uid = ?", (uid,)).fetchone()
+            created = cur["created_at"] if cur else now
+            c.execute(
+                "insert or replace into saved (uid, title, issns, report, deleted, dirty, created_at, updated_at)"
+                " values (?, ?, ?, ?, 0, 1, ?, ?)",
+                (uid, ident.get("title") or report.get("query", ""), json.dumps(ident.get("issns") or []),
+                 json.dumps(rep), created, now))
+        return uid
+
+    def refresh_saved(self, report: dict) -> str | None:
+        """If this journal is saved, keep its saved report up to date (newer full reports replace it)."""
+        ident = report.get("identity") or {}
+        uid = self.find_saved(ident.get("issns") or [], ident.get("title"))
+        if uid:
+            self.save_journal(report)
+        return uid
+
+    def unsave(self, uid: str) -> None:
+        with self._conn() as c:
+            c.execute("update saved set deleted = 1, dirty = 1, report = '{}', updated_at = ? where uid = ?", (time.time(), uid))
+
+    def list_saved(self) -> list[dict]:
+        with self._conn() as c:
+            rows = c.execute("select * from saved where deleted = 0 order by created_at desc").fetchall()
+        return [{"uid": r["uid"], "title": r["title"], "issns": json.loads(r["issns"]), "report": json.loads(r["report"]),
+                 "created_at": r["created_at"], "updated_at": r["updated_at"]} for r in rows]
+
+    def get_saved(self, uid: str) -> dict | None:
+        return next((r for r in self.list_saved() if r["uid"] == uid), None)
+
+    def dirty_saved(self) -> list[dict]:
+        with self._conn() as c:
+            rows = c.execute("select * from saved where dirty = 1").fetchall()
+        return [{"uid": r["uid"], "title": r["title"], "issns": json.loads(r["issns"]), "report": json.loads(r["report"]),
+                 "deleted": bool(r["deleted"]), "created_at": r["created_at"], "updated_at": r["updated_at"]} for r in rows]
+
+    def mark_clean_saved(self, uids_with_time: list[tuple[str, float]]) -> None:
+        with self._conn() as c:
+            c.executemany("update saved set dirty = 0 where uid = ? and updated_at = ?", uids_with_time)
+
+    def merge_remote_saved(self, row: dict) -> bool:
+        with self._conn() as c:
+            cur = c.execute("select updated_at from saved where uid = ?", (row["uid"],)).fetchone()
+            if cur and cur["updated_at"] >= row["updated_at"]:
+                return False
+            c.execute(
+                "insert or replace into saved (uid, title, issns, report, deleted, dirty, created_at, updated_at)"
+                " values (?, ?, ?, ?, ?, 0, ?, ?)",
+                (row["uid"], row.get("title", ""), json.dumps(row.get("issns") or []), json.dumps(row.get("report") or {}),
+                 1 if row.get("deleted") else 0, row.get("created_at") or row["updated_at"], row["updated_at"]))
         return True
 
     def get_meta(self, key: str, default: str = "") -> str:

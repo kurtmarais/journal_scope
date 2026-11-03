@@ -10,6 +10,10 @@ Checks a journal's validity and credibility for publication by pulling, in one r
 | Journal website | Days to first decision / decision after review / acceptance / publication, acceptance rate, APC, impact factor as reported by the journal |
 | [SANLiC](https://sanlic.ac.za/read-and-publish-agreements/) | Whether a SANLiC read-and-publish agreement covers the journal, OA model, explanation, agreement period |
 
+**Saved journals:** the ☆ on a report stars the journal. **★ Saved journals** (above History) opens a table of them: CiteScore and quartile, DHET, SANLiC, Norwegian level, APC, first-decision time and acceptance rate. Click one for its full report, with **Check again** to refresh it. Saved journals are kept apart from history (clearing history doesn't remove them), keep their newest full report automatically, and sync with the phone.
+
+**APC:** each report shows the APC as stated by the journal's website, by DOAJ (open-access journals) and as OpenAlex's list price, plus whether SANLiC covers it. List prices can differ from what you are charged.
+
 **Find journals** (the second search bar) lists journals for a keyword, each with its DHET (CREST) and SANLiC status, OpenAlex citation figures, and the APC and weeks to publication from DOAJ for open-access journals:
 - **Titles:** journals whose titles contain the words (OpenAlex, DOAJ, the CREST list).
 - **Scope:** journals that published the most papers on the topic in the last five years (OpenAlex, Scopus), plus DOAJ journals whose keywords or subjects match. Scopus's part needs your institution's access.

@@ -132,3 +132,29 @@ def test_desktop_endpoints(tmp_path, monkeypatch):
         assert m["crest"][0]["key"] == "JNL_1" and m["sanlic"] == []
         assert c.get("/api/discover/openalex", params={"q": "x"}).status_code == 422     # too short
     main.app.state.openalex_key = lambda: None
+
+
+def test_saved_endpoints(tmp_path):
+    from fastapi.testclient import TestClient
+
+    import app.main as main
+    main.app.state.db = None
+    main.app.state.lists_dir = tmp_path
+    rep = {"query": "1532-0464", "identity": {"title": "JBI", "issns": ["1532-0464"]}, "sources": {}}
+    import os
+    os.environ["JOURNAL_SCOPE_DATA_DIR"] = str(tmp_path)
+    try:
+        with TestClient(main.app) as c:
+            assert c.get("/api/saved").json() == []
+            uid = c.post("/api/saved", json=rep).json()["uid"]
+            assert uid == "1532-0464"
+            assert c.get("/api/saved").json()[0]["title"] == "JBI"
+            assert c.get(f"/api/saved/{uid}").json()["report"]["query"] == "1532-0464"
+            h = main.app.state.db.add_report(rep)
+            assert c.get(f"/api/history/{h}").json()["saved"] == uid
+            assert c.delete(f"/api/saved/{uid}").json() == {"ok": True}
+            assert c.get("/api/saved").json() == []
+            assert c.post("/api/saved", json={}).status_code == 400
+    finally:
+        del os.environ["JOURNAL_SCOPE_DATA_DIR"]
+        main.app.state.db = None

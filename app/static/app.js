@@ -1,5 +1,5 @@
-import { h, renderReport, renderCandidates } from "/web/report-view.js";
-import { discover, renderDiscover } from "/web/discover.js";
+import { findSaved, h, renderCandidates, renderReport, renderSaved } from "/web/report-view.js";
+import { discover, recordToReport, renderDiscover } from "/web/discover.js";
 
 const $ = (sel) => document.querySelector(sel);
 let current = null;
@@ -13,12 +13,52 @@ function setStatus(text, error = false) {
   el.hidden = !text;
 }
 
-function show(report) {
+let saved = [];
+let shownReport = null;
+
+function show(report, extra = null) {
   current = report.uid || null;
-  $("#out").replaceChildren(renderReport(report));
+  shownReport = report;
+  const entry = findSaved(saved, report);
+  $("#out").replaceChildren(renderReport(report, { saved: !!entry, onStar: () => toggleStar(report), extra }));
   document.querySelectorAll(".history li").forEach((li) => li.classList.toggle("active", li.dataset.uid === current));
+  $("#savedBtn").classList.remove("active");
   $(".main").scrollTop = 0;
 }
+
+async function loadSaved() {
+  try { saved = await (await fetch("/api/saved")).json(); } catch { return; }
+  $("#savedCount").textContent = saved.length ? `(${saved.length})` : "";
+}
+
+async function toggleStar(report) {
+  const entry = findSaved(saved, report);
+  if (entry) await fetch(`/api/saved/${encodeURIComponent(entry.uid)}`, { method: "DELETE" });
+  else await fetch("/api/saved", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(report) });
+  await loadSaved();
+  if (shownReport === report) show(report, savedExtra(report));
+}
+
+function savedExtra(report) {
+  const issn = ((report.identity || {}).issns || [])[0];
+  const title = (report.identity || {}).title || report.query;
+  return h("button", { type: "button", class: "secondary-btn recheck", onclick: () => { $("#q").value = issn || title; run({ q: issn || title }); } },
+    "Check again (refresh this report)");
+}
+
+async function showSaved() {
+  await loadSaved();
+  setStatus("");
+  current = null;
+  shownReport = null;
+  document.querySelectorAll(".history li").forEach((li) => li.classList.remove("active"));
+  $("#savedBtn").classList.add("active");
+  $("#out").replaceChildren(renderSaved(saved,
+    (item) => show(item.report, savedExtra(item.report)),
+    async (item) => { await fetch(`/api/saved/${encodeURIComponent(item.uid)}`, { method: "DELETE" }); showSaved(); }));
+  $(".main").scrollTop = 0;
+}
+$("#savedBtn").addEventListener("click", showSaved);
 
 async function refreshHistory() {
   let items = [];
@@ -80,6 +120,7 @@ async function run(params) {
       $("#out").replaceChildren(renderCandidates(report.query, report.candidates,
         (c) => run({ q: report.query, sid: c.source_id, site: $("#site").value.trim() })));
     } else {
+      await loadSaved();
       show(report);
       refreshHistory();
     }
@@ -130,9 +171,18 @@ $("#find").addEventListener("submit", async (e) => {
   try {
     const result = await discover(mode, q, provider);
     setStatus("");
+    const asReport = (rec) => ({ identity: { issns: rec.issns, title: rec.title } });
     $("#out").replaceChildren(renderDiscover(result, (rec) => {
       $("#q").value = rec.issns[0] || rec.title;
       run({ q: rec.issns[0] || rec.title });
+    }, {}, {
+      isSaved: (rec) => !!findSaved(saved, asReport(rec)),
+      onStar: async (rec) => {
+        const entry = findSaved(saved, asReport(rec));
+        if (entry) await fetch(`/api/saved/${encodeURIComponent(entry.uid)}`, { method: "DELETE" });
+        else await fetch("/api/saved", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(recordToReport(rec)) });
+        await loadSaved();
+      },
     }));
   } catch (err) {
     setStatus("Search failed: " + err.message, true);
@@ -141,8 +191,9 @@ $("#find").addEventListener("submit", async (e) => {
   }
 });
 
-window.journalScope = { refreshHistory };
+window.journalScope = { refreshHistory: () => { refreshHistory(); loadSaved(); } };
 if (new URLSearchParams(location.search).has("desktop")) $("#desk").hidden = false;
 refreshHistory();
+loadSaved();
 refreshStatus();
 setInterval(refreshStatus, 15000);

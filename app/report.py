@@ -8,14 +8,14 @@ from datetime import date
 import time
 
 from .fetch import Fetcher
-from .sources import ERROR, FOUND, crest, journal_site, kanalregister, sanlic, scopus, source_result
+from .sources import ERROR, FOUND, apc, crest, journal_site, kanalregister, sanlic, scopus, source_result
 from .util import looks_like_issn, normalise_issn
 
 
 def _glance(report: dict) -> list[dict]:
     """Headline values, each taken straight from one source."""
     working = {"status": "working", "data": {}}
-    s = {k: report["sources"].get(k) or working for k in ("scopus", "crest", "kanalregister", "sanlic", "journal_site")}
+    s = {k: report["sources"].get(k) or working for k in ("scopus", "crest", "kanalregister", "sanlic", "journal_site", "apc")}
     out: list[dict] = []
 
     sc = s["scopus"]
@@ -71,17 +71,50 @@ def _glance(report: dict) -> list[dict]:
     elif n["status"] == "not_found":
         out.append({"label": "SANLiC APC agreement", "value": "Not covered", "tone": "warn", "source": "sanlic"})
 
+    tile = apc_tile(report)
+    if tile:
+        out.append(tile)
+
     j = s["journal_site"]
-    for key in ("apc", "first_decision", "submission_to_acceptance", "acceptance_rate", "impact_factor"):
+    for key in ("first_decision", "submission_to_acceptance", "acceptance_rate", "impact_factor"):
         m = j["data"].get("metrics", {}).get(key)
         if m:
             out.append({"label": m["label"], "value": m["value"], "tone": "neutral", "source": "journal_site"})
     return out
 
 
+def _price(p: dict) -> str:
+    return f"{p.get('currency', '')} {p['price']:,}".strip() if isinstance(p.get("price"), (int, float)) else ""
+
+
+def apc_tile(report: dict) -> dict | None:
+    """One APC figure: the journal's own statement first, then DOAJ, then OpenAlex's list price."""
+    s = report["sources"]
+    site = ((s.get("journal_site") or {}).get("data") or {}).get("metrics", {}).get("apc")
+    a = (s.get("apc") or {}).get("data") or {}
+    sanl = s.get("sanlic") or {}
+    covered = sanl.get("status") == FOUND and sanl["data"].get("included")
+    value = source = None
+    if site:
+        value, source = site["value"], "journal site"
+    elif a.get("doaj"):
+        d = a["doaj"]
+        usd = next((p for p in d["prices"] if p.get("currency") == "USD"), None) or (d["prices"] or [None])[0]
+        value = "No APC" if d.get("has_apc") is False else (_price(usd) if usd else None)
+        source = "DOAJ"
+    if not value and a.get("openalex") and a["openalex"].get("apc_usd"):
+        value, source = f"USD {a['openalex']['apc_usd']:,} (list price)", "OpenAlex"
+    if not value:
+        return None
+    if covered and value != "No APC":
+        value += " · SANLiC covered"
+    return {"label": "APC", "value": value, "tone": "good" if covered or value == "No APC" else "neutral",
+            "source": source.replace(" ", "_") if source == "journal site" else source.lower()}
+
+
 # Longest wait per source before it is reported as not answering (seconds).
-LIMITS = {"scopus": 30, "crest": 30, "sanlic": 90, "kanalregister": 60, "journal_site": 75}
-NAMES = {"scopus": scopus.NAME, "crest": crest.NAME, "sanlic": sanlic.NAME,
+LIMITS = {"scopus": 30, "crest": 30, "sanlic": 90, "apc": 25, "kanalregister": 60, "journal_site": 75}
+NAMES = {"scopus": scopus.NAME, "crest": crest.NAME, "sanlic": sanlic.NAME, "apc": apc.NAME,
          "kanalregister": kanalregister.NAME, "journal_site": journal_site.NAME}
 
 
@@ -121,6 +154,7 @@ async def build_report(
     scopus_key: str | None = None,
     scopus_token: str | None = None,
     progress=lambda key, state, result=None: None,
+    openalex_key: str | None = None,
 ) -> dict:
     query = (query or "").strip()
     issn = normalise_issn(query) if looks_like_issn(query) else None
@@ -144,7 +178,7 @@ async def build_report(
     if candidates:  # ambiguous title: let the user choose before querying the rest
         if early_kanal:
             early_kanal.cancel()
-        for key in ("crest", "kanalregister", "sanlic", "journal_site"):
+        for key in ("crest", "kanalregister", "sanlic", "journal_site", "apc"):
             report["sources"][key] = {"source": key, "status": "skipped", "data": {}, "note": "Choose a journal first."}
         report["identity"] = {"title": None, "issns": [], "publisher": None}
         report["glance"] = []
@@ -165,10 +199,18 @@ async def build_report(
         k = await kanal_task
         if k["status"] == FOUND and k["data"].get("title"):
             title = k["data"]["title"]
-    crest_r, sanlic_r, site_r = await asyncio.gather(
+    async def apc_when_ready():
+        ids = list(issns)
+        if not ids:   # title search without Scopus: Kanalregister may know the ISSN
+            k = await kanal_task
+            ids = k["data"].get("issns", []) if k["status"] == FOUND else []
+        return await _timed("apc", apc.lookup(fetcher, ids, openalex_key), timings, progress)
+
+    crest_r, sanlic_r, site_r, apc_r = await asyncio.gather(
         _timed("crest", crest.lookup(fetcher, title, issns), timings, progress),
         _timed("sanlic", sanlic.lookup(fetcher, title, issns), timings, progress),
         site_after_kanal(kanal_task),
+        apc_when_ready(),
     )
     kanal_r = await kanal_task
 
@@ -181,7 +223,7 @@ async def build_report(
             issns.append(i)
 
     report["sources"].update(
-        {"crest": crest_r, "kanalregister": kanal_r, "sanlic": sanlic_r, "journal_site": site_r}
+        {"crest": crest_r, "kanalregister": kanal_r, "sanlic": sanlic_r, "journal_site": site_r, "apc": apc_r}
     )
     report["identity"] = {
         "title": title,

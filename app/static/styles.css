@@ -42,3 +42,8 @@ button#go:disabled { opacity: .6; cursor: progress; }
 select { font: inherit; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
 .secondary-btn { font: inherit; font-weight: 600; border: 1px solid var(--accent); border-radius: 8px; padding: 8px 16px; background: var(--panel); color: var(--accent); cursor: pointer; }
 .secondary-btn:disabled { opacity: .6; cursor: progress; }
+.saved-btn { margin: 8px 12px 0; text-align: left; font: inherit; font-weight: 600; border: 1px solid var(--line); border-radius: 8px;
+  padding: 8px 10px; background: var(--bg); color: var(--ink); cursor: pointer; }
+.saved-btn:hover, .saved-btn.active { border-color: #d9a400; background: #fff6d6; color: #8a6400; }
+@media (prefers-color-scheme: dark) { .saved-btn:hover, .saved-btn.active { background: #3a2f12; color: #f0c66b; } }
+#savedCount { color: var(--muted); font-weight: 400; }

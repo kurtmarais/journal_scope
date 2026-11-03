@@ -2,10 +2,11 @@
 // Reads reports your PC has produced (synced through your Supabase project) and
 // queues new lookups, which the PC runs the next time it syncs.
 import { SUPABASE_KEY, SUPABASE_URL } from "./config.js";
-import { h, normaliseIssn, normaliseTitle, parseScopusEntry, quickReport, renderCandidates, renderReport, scopusCandidates, scopusEntries } from "./report-view.js";
+import { apcFromSources, findSaved, h, journalKey, normaliseIssn, normaliseTitle, parseScopusEntry, renderSaved, quickReport, renderCandidates, renderReport, scopusCandidates, scopusEntries } from "./report-view.js";
 import { AuthError, Supabase, SyncError } from "./supabase.js";
-import { discover, renderDiscover } from "./discover.js";
+import { discover, recordToReport, renderDiscover } from "./discover.js";
 
+const APP_VERSION = "2026.11.7";   // shown at the bottom of the home screen; bump with each phone change
 const root = document.getElementById("root");
 const LS = {
   get: (k, d = null) => { try { const v = localStorage.getItem("js." + k); return v === null ? d : JSON.parse(v); } catch { return d; } },
@@ -17,6 +18,7 @@ const state = {
   conf: { url: SUPABASE_URL || LS.get("url", ""), key: SUPABASE_KEY || LS.get("key", "") },
   session: LS.get("session"),
   reports: LS.get("reports", {}),     // uid -> row (without deleted ones)
+  saved: LS.get("saved", {}),         // saved (starred) journals: uid -> row
   requests: LS.get("requests", {}),   // uid -> row
   cursors: LS.get("cursors", {}),
   view: { name: "home" },
@@ -36,6 +38,7 @@ function save() {
   LS.set("reports", state.reports);
   LS.set("requests", state.requests);
   LS.set("cursors", state.cursors);
+  LS.set("saved", state.saved);
 }
 
 // ------------------------------------------------------------------ auth
@@ -49,8 +52,8 @@ async function token() {
 }
 
 function signOut() {
-  for (const k of ["session", "reports", "requests", "cursors"]) LS.del(k);
-  Object.assign(state, { session: null, reports: {}, requests: {}, cursors: {}, view: { name: "home" } });
+  for (const k of ["session", "reports", "requests", "cursors", "saved"]) LS.del(k);
+  Object.assign(state, { session: null, reports: {}, requests: {}, cursors: {}, saved: {}, view: { name: "home" } });
   render();
 }
 
@@ -68,6 +71,20 @@ async function sync() {
         else if (!store[row.uid] || store[row.uid].updated_at <= row.updated_at) store[row.uid] = row;
         state.cursors[table] = row.server_updated_at;
       }
+    }
+    try {   // saved journals (needs the 20261105090000_saved_journals.sql table)
+      const rows = await sb().changesSince("journal_saved", state.cursors.journal_saved || "", t);
+      for (const row of rows) {
+        if (row.deleted) delete state.saved[row.uid];
+        else if (!state.saved[row.uid] || state.saved[row.uid].updated_at <= row.updated_at) state.saved[row.uid] = row;
+        state.cursors.journal_saved = row.server_updated_at;
+      }
+      state.savedError = "";
+    } catch (e) {
+      if (e instanceof AuthError) throw e;
+      state.savedError = /journal_saved|404|does not exist/i.test(e.message)
+        ? "Saved journals need a database update: run supabase/migrations/20261105090000_saved_journals.sql in Supabase."
+        : e.message;
     }
     // A finished lookup: its report is now in the list, so the request can go.
     for (const r of Object.values(state.requests)) {
@@ -173,6 +190,14 @@ async function quickSearch(query, site, sourceId = null) {
     const issns = scopus ? scopus.issns : issn ? [issn] : [];
     const title = scopus ? scopus.title : issn ? null : query;
     const inList = `(${issns.join(",")})`;
+    const apcPromise = (async () => {
+      if (!issns.length) return null;
+      const fn = (source) => api.request("GET", "/functions/v1/discover", { token: t, params: { source, mode: "issn", q: issns[0] } })
+        .catch(() => null);
+      const [oa, dj] = await Promise.all([fn("openalex"), fn("doaj")]);
+      if (!oa && !dj) return null;
+      return apcFromSources(((oa || {}).sources || [])[0], ((dj || {}).results || [])[0]);
+    })();
     const [crestRows, sanlicRows] = await Promise.all([
       issns.length ? api.select("ref_crest", { or: `(issn.in.${inList},eissn.in.${inList})`, limit: "1" }, t) : Promise.resolve([]),
       issns.length ? api.select("ref_sanlic", { issns: `ov.{${issns.join(",")}}`, limit: "1" }, t) : Promise.resolve([]),
@@ -180,7 +205,8 @@ async function quickSearch(query, site, sourceId = null) {
     const norm = normaliseTitle(title);
     const crest = crestRows[0] || (norm ? (await api.select("ref_crest", { title_norm: `eq.${norm}`, limit: "1" }, t))[0] : null) || null;
     const sanlic = sanlicRows[0] || (norm ? (await api.select("ref_sanlic", { title_norm: `eq.${norm}`, limit: "1" }, t))[0] : null) || null;
-    const report = quickReport(query, { scopus, scopusNote, scopusError, crest, sanlic, lists, issns, title });
+    const apc = await apcPromise;
+    const report = quickReport(query, { scopus, scopusNote, scopusError, crest, sanlic, lists, issns, title, apc });
     state.view = { name: "quick", query, site, report, sid: issns[0] || null, listsLoaded: lists.length > 0 };
   } catch (e) {
     state.view = { name: "quick", query, site, error: e.message };
@@ -243,7 +269,10 @@ function discoverScreen(v) {
   return h("div", {}, backBar(), renderDiscover(v.result, (rec) => {
     state.back = v;                       // ‹ Back returns to these results
     quickSearch(rec.issns[0] || rec.title, "");
-  }, v.opts));
+  }, v.opts, {
+    isSaved: (rec) => !!findSaved(savedList(), { identity: { issns: rec.issns, title: rec.title } }),
+    onStar: (rec) => toggleStar(recordToReport(rec)),
+  }));
 }
 
 function fullReportFor(issns) {
@@ -334,9 +363,12 @@ function homeScreen() {
     h("form", { class: "ask", onsubmit: (e) => { e.preventDefault(); state.back = null; quickSearch(q.value.trim(), site.value.trim()); } },
       q, site, h("button", { class: "primary" }, "Check journal")),
     findForm(),
+    h("button", { class: "saved-btn", onclick: () => { state.back = null; state.view = { name: "saved" }; render(); window.scrollTo(0, 0); } },
+      `★ Saved journals${savedList().length ? ` (${savedList().length})` : ""}`),
     reqs.length > 0 && h("ul", { class: "requests" }, reqs.map(requestRow)),
     filterBox, list,
-    h("p", { class: "foot" }, state.error ? h("span", { class: "err" }, state.error) : state.lastSync ? `Synced ${timeFmt(state.lastSync)}` : "Syncing…"));
+    h("p", { class: "foot" }, state.error ? h("span", { class: "err" }, state.error) : state.lastSync ? `Synced ${timeFmt(state.lastSync)}` : "Syncing…",
+      ` · version ${APP_VERSION}`));
 }
 
 function findForm() {
@@ -358,11 +390,61 @@ function backBar(title) {
   return h("header", { class: "bar" }, h("button", { class: "link back", onclick: back }, "‹ Back"), h("span", { class: "bar-title" }, title || ""));
 }
 
+// ---------------------------------------------------------- saved journals
+const savedList = () => Object.values(state.saved).sort((a, b) => b.created_at - a.created_at);
+
+async function toggleStar(report) {
+  const entry = findSaved(savedList(), report);
+  const now = Date.now() / 1000;
+  try {
+    const t = await token();
+    if (entry) {
+      await sb().patch("journal_saved", entry.uid, { deleted: true, report: {} }, t);
+      delete state.saved[entry.uid];
+    } else {
+      const id = report.identity || {};
+      const row = { uid: journalKey(report), title: id.title || report.query || "", issns: id.issns || [],
+        report: { ...report, created_at: report.created_at || now }, deleted: false, created_at: now, updated_at: now };
+      await sb().upsert("journal_saved", [row], t);
+      state.saved[row.uid] = row;
+    }
+    save();
+  } catch (e) {
+    alert(/journal_saved|404|does not exist/i.test(e.message)
+      ? "Saved journals need a database update first: run supabase/migrations/20261105090000_saved_journals.sql in Supabase."
+      : "Could not save: " + e.message);
+  }
+  render();
+}
+
+function starOpts(report) {
+  return { saved: !!findSaved(savedList(), report), onStar: () => toggleStar(report) };
+}
+
+function savedScreen() {
+  return h("div", {}, backBar(),
+    state.savedError && h("p", { class: "err" }, state.savedError),
+    renderSaved(savedList(), (item) => { state.back = { name: "saved" }; state.view = { name: "savedReport", uid: item.uid }; render(); window.scrollTo(0, 0); },
+      (item) => { if (confirm(`Remove ${item.title} from saved journals?`)) toggleStar(item.report && item.report.identity ? item.report : { identity: { title: item.title, issns: item.issns } }); }));
+}
+
+function savedReportScreen(uid) {
+  const item = state.saved[uid];
+  if (!item) { state.view = { name: "saved" }; return savedScreen(); }
+  const rep = item.report || {};
+  const issn = (item.issns || [])[0];
+  return h("div", {}, backBar(),
+    renderReport(rep, { ...starOpts(rep), extra: h("div", { class: "actions" },
+      h("button", { class: "secondary", onclick: () => { state.back = { name: "savedReport", uid }; quickSearch(issn || item.title, ""); } }, "Check again now"),
+      h("button", { class: "secondary", onclick: () => requestLookup(issn || item.title, "", null) }, "Get full report from my PC")) }),
+    h("p", { class: "foot" }, `Saved ${dateFmt(item.created_at)}${rep.quick ? " from a quick check" : ""}.`));
+}
+
 function reportScreen(id) {
   const row = state.reports[id];
   if (!row) { state.view = { name: "home" }; return homeScreen(); }
   return h("div", {}, backBar(),
-    renderReport(row.report),
+    renderReport(row.report, starOpts(row.report)),
     h("p", { class: "foot" }, `Checked ${dateFmt(row.created_at)} on your PC.`),
     h("button", { class: "danger", onclick: () => deleteReport(id) }, "Delete report"));
 }
@@ -398,7 +480,7 @@ function quickScreen(v) {
       h("button", { class: "secondary", onclick: () => requestLookup(v.query, v.site, v.sid) },
         full ? "Refresh full report on my PC" : "Get full report from my PC")),
     h("p", { class: "note" }, "Instant check from Scopus and the CREST and SANLiC lists. The full report adds Kanalregister and the journal's own statistics; your PC runs it when it is on."),
-    renderReport(v.report));
+    renderReport(v.report, starOpts(v.report)));
 }
 
 function render() {
@@ -410,6 +492,8 @@ function render() {
   else if (state.view.name === "candidates") screen = candidatesScreen(state.view.request);
   else if (state.view.name === "quick") screen = quickScreen(state.view);
   else if (state.view.name === "discover") screen = discoverScreen(state.view);
+  else if (state.view.name === "saved") screen = savedScreen();
+  else if (state.view.name === "savedReport") screen = savedReportScreen(state.view.uid);
   else screen = homeScreen();
   const focused = document.activeElement && document.activeElement.name;
   const typed = focused && document.activeElement.value;

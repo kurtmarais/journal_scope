@@ -7,6 +7,7 @@
 //   GET /functions/v1/discover?source=openalex&mode=title|scope&q=...
 //   GET /functions/v1/discover?source=doaj&mode=title|scope&q=...
 //   GET /functions/v1/discover?source=scopus&q=...                  (scope only)
+//   GET /functions/v1/discover?source=openalex|doaj&mode=issn&q=ISSN (one journal, for its APC)
 //
 // Secrets: ELSEVIER_API_KEY (for Scopus), optional ELSEVIER_INSTTOKEN,
 // optional OPENALEX_API_KEY (own daily allowance instead of a shared one).
@@ -32,9 +33,21 @@ async function getJSON(url: string, headers: Record<string, string> = {}): Promi
   return resp.json();
 }
 
+const ISSN = /^\d{4}-\d{3}[\dX]$/;
+
 async function openalex(mode: string, q: string): Promise<unknown> {
   const key = Deno.env.get("OPENALEX_API_KEY");
   const extra: Record<string, string> = key ? { api_key: key } : {};
+  if (mode === "issn") {   // one journal by ISSN (for its APC)
+    const issn = q.toUpperCase();
+    if (!ISSN.test(issn)) throw new Error("not an ISSN");
+    const qs = new URLSearchParams(extra).toString();
+    const resp = await fetch(`https://api.openalex.org/sources/issn:${issn}${qs ? "?" + qs : ""}`,
+      { headers: { Accept: "application/json" }, signal: AbortSignal.timeout(20000) });
+    if (resp.status === 404) return { sources: [] };
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    return { sources: [await resp.json()] };
+  }
   if (mode === "title") {
     const p = new URLSearchParams({ search: q, filter: "type:journal", "per-page": "50", ...extra });
     return { sources: (await getJSON(`https://api.openalex.org/sources?${p}`)).results ?? [] };
@@ -54,6 +67,13 @@ async function openalex(mode: string, q: string): Promise<unknown> {
 }
 
 async function doaj(mode: string, q: string): Promise<unknown> {
+  if (mode === "issn") {
+    const issn = q.toUpperCase();
+    if (!ISSN.test(issn)) throw new Error("not an ISSN");
+    const query = `bibjson.pissn:"${issn}" OR bibjson.eissn:"${issn}"`;
+    const data = await getJSON(`https://doaj.org/api/search/journals/${encodeURIComponent(query)}?pageSize=5`);
+    return { results: data.results ?? [] };
+  }
   const words = q.split(" ").filter(Boolean);
   if (!words.length) return { results: [] };
   const t = words.join(" AND ");
@@ -85,8 +105,8 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: cors });
   const u = new URL(req.url).searchParams;
   const source = u.get("source") ?? "";
-  const mode = u.get("mode") === "scope" ? "scope" : "title";
-  const q = clean(u.get("q") ?? "");
+  const mode = ["scope", "issn"].includes(u.get("mode") ?? "") ? u.get("mode")! : "title";
+  const q = mode === "issn" ? (u.get("q") ?? "").trim() : clean(u.get("q") ?? "");
   if (q.length < 2) return reply({ error: "Give at least one keyword" }, 400);
   try {
     if (source === "openalex") return reply(await openalex(mode, q));
