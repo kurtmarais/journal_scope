@@ -349,3 +349,79 @@ def test_phone_saved_journals(tmp_path):
     finally:
         api.shutdown()
         web.shutdown()
+
+
+def test_phone_find_star_and_filters(tmp_path):
+    from tests.reflist_samples import get_bytes_for
+
+    fake = FakeSupabase()
+    api, api_url = fake.serve()
+    web, web_url = serve_web(api_url)
+    pc = SyncEngine(Database(tmp_path / "pc.db"), {}, lambda s: None, lambda *a: {}, opener=fake.opener,
+                    get_bytes=get_bytes_for(tmp_path), tmp_dir=tmp_path / "lists")
+    pc.sign_in(api_url, "sb_publishable_test", EMAIL, PASSWORD)
+    pc.cycle()
+
+    async def run():
+        async with pw.async_playwright() as p:
+            browser = await p.chromium.launch(executable_path=CHROME, args=["--no-sandbox"])
+            ctx = await browser.new_context(viewport={"width": 393, "height": 852}, is_mobile=True, has_touch=True)
+            page = await ctx.new_page()
+            errors = []
+            page.on("pageerror", lambda e: errors.append(str(e)))
+            await page.goto(web_url)
+            await page.fill("input[type=email]", EMAIL)
+            await page.fill("input[type=password]", PASSWORD)
+            await page.click("button:has-text('Sign in')")
+            await page.wait_for_selector("text=Reports from your PC appear here.")
+            await page.fill("input[name=fq]", "informatics")
+            await page.click("button:has-text('Find journals')")
+            await page.wait_for_selector(".d-item")
+            total = await page.locator(".d-row").count()
+
+            # Star straight from the list
+            await page.click(".d-row:has-text('Journal of Biomedical Informatics') >> nth=0 >> .d-star")
+            await page.wait_for_selector(".d-row:has-text('Journal of Biomedical Informatics') .d-star.on")
+            row = fake.tables["journal_saved"]["1532-0464"]
+            assert row["report"]["from_search"] is True
+            assert row["report"]["sources"]["crest"]["data"]["eligible"] is True
+
+            # More filters
+            await page.click("summary:has-text('More filters')")
+            await page.fill("label.d-field:has-text('Max APC') input", "2000")
+            await page.locator("label.d-field:has-text('Max APC') input").press("Enter")
+            await page.check("label.check:has-text('Hide unknown APC') input")
+            titles = await page.locator(".d-item b").all_inner_texts()
+            assert set(titles) == {"Brain Informatics", "Health Informatics Journal"}, titles
+            assert await page.is_visible("summary:has-text('(2 on)')") or await page.is_visible("summary:has-text('on)')")
+            await page.click("button:has-text('Clear filters')")
+            assert await page.locator(".d-row").count() == total
+            await page.fill("label.d-field:has-text('Publisher') input", "elsevier")
+            await page.locator("label.d-field:has-text('Publisher') input").press("Enter")
+            assert set(await page.locator(".d-item b").all_inner_texts()) == {"Journal of Biomedical Informatics", "Informatics in Medicine Unlocked"}
+            await page.click("button:has-text('Clear filters')")
+            await page.check("label.check:has-text('Saved journals only') input")
+            assert await page.locator(".d-item b").all_inner_texts() == ["Journal of Biomedical Informatics"]
+            await page.click("button:has-text('Clear filters')")
+            await page.select_option(".d-controls select", "apc")
+            first = await page.locator(".d-item b").first.inner_text()
+            assert first == "Brain Informatics"
+            if SHOTS:
+                await page.click("summary:has-text('More filters')") if not await page.is_visible("label.d-field") else None
+                await page.screenshot(path=f"{SHOTS}/phone_find_filters.png", full_page=True)
+
+            # The saved search result opens as a report with Check again
+            await page.click("text=‹ Back")
+            await page.click("button.saved-btn:has-text('(1)')")
+            await page.click(".saved-row")
+            await page.wait_for_selector("button:has-text('Check again now')")
+            assert await page.is_visible(".tile:has-text('DHET subsidy')")
+
+            assert not errors, errors
+            await browser.close()
+
+    try:
+        asyncio.run(run())
+    finally:
+        api.shutdown()
+        web.shutdown()

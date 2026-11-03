@@ -4,9 +4,9 @@
 import { SUPABASE_KEY, SUPABASE_URL } from "./config.js";
 import { apcFromSources, findSaved, h, journalKey, normaliseIssn, normaliseTitle, parseScopusEntry, renderSaved, quickReport, renderCandidates, renderReport, scopusCandidates, scopusEntries } from "./report-view.js";
 import { AuthError, Supabase, SyncError } from "./supabase.js";
-import { discover, renderDiscover } from "./discover.js";
+import { discover, recordToReport, renderDiscover } from "./discover.js";
 
-const APP_VERSION = "2026.11.6";   // shown at the bottom of the home screen; bump with each phone change
+const APP_VERSION = "2026.11.7";   // shown at the bottom of the home screen; bump with each phone change
 const root = document.getElementById("root");
 const LS = {
   get: (k, d = null) => { try { const v = localStorage.getItem("js." + k); return v === null ? d : JSON.parse(v); } catch { return d; } },
@@ -269,7 +269,10 @@ function discoverScreen(v) {
   return h("div", {}, backBar(), renderDiscover(v.result, (rec) => {
     state.back = v;                       // ‹ Back returns to these results
     quickSearch(rec.issns[0] || rec.title, "");
-  }, v.opts));
+  }, v.opts, {
+    isSaved: (rec) => !!findSaved(savedList(), { identity: { issns: rec.issns, title: rec.title } }),
+    onStar: (rec) => toggleStar(recordToReport(rec)),
+  }));
 }
 
 function fullReportFor(issns) {

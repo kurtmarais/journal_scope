@@ -1,5 +1,5 @@
 import { findSaved, h, renderCandidates, renderReport, renderSaved } from "/web/report-view.js";
-import { discover, renderDiscover } from "/web/discover.js";
+import { discover, recordToReport, renderDiscover } from "/web/discover.js";
 
 const $ = (sel) => document.querySelector(sel);
 let current = null;
@@ -171,9 +171,18 @@ $("#find").addEventListener("submit", async (e) => {
   try {
     const result = await discover(mode, q, provider);
     setStatus("");
+    const asReport = (rec) => ({ identity: { issns: rec.issns, title: rec.title } });
     $("#out").replaceChildren(renderDiscover(result, (rec) => {
       $("#q").value = rec.issns[0] || rec.title;
       run({ q: rec.issns[0] || rec.title });
+    }, {}, {
+      isSaved: (rec) => !!findSaved(saved, asReport(rec)),
+      onStar: async (rec) => {
+        const entry = findSaved(saved, asReport(rec));
+        if (entry) await fetch(`/api/saved/${encodeURIComponent(entry.uid)}`, { method: "DELETE" });
+        else await fetch("/api/saved", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(recordToReport(rec)) });
+        await loadSaved();
+      },
     }));
   } catch (err) {
     setStatus("Search failed: " + err.message, true);

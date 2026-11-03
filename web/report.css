@@ -110,3 +110,18 @@ label.check input { width: auto; }
   .saved-table td.j { display: block; padding-right: 28px; margin-bottom: 4px; }
   .saved-table td.x { position: absolute; top: 4px; right: 4px; }
 }
+
+/* Find journals: star and more filters */
+.d-row { display: flex; gap: 6px; align-items: stretch; }
+.d-row .d-item { flex: 1; min-width: 0; }
+.d-star { flex: none; width: 44px; font-size: 1.25rem; border: 1px solid var(--line); border-radius: 10px; background: var(--panel);
+  color: var(--muted); cursor: pointer; }
+.d-star.on { color: #d9a400; border-color: #d9a400; background: #fff6d6; }
+@media (prefers-color-scheme: dark) { .d-star.on { background: #3a2f12; } }
+.d-more { margin: 0 0 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); padding: 6px 12px; }
+.d-more summary { cursor: pointer; font-size: .88rem; font-weight: 600; color: var(--accent); }
+.d-more-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 8px 16px; padding: 10px 0 4px; align-items: end; }
+label.d-field { display: flex; flex-direction: column; gap: 3px; font-size: .8rem; color: var(--muted); }
+label.d-field input, label.d-field select { font: inherit; font-size: .9rem; color: var(--ink); background: var(--bg); border: 1px solid var(--line);
+  border-radius: 8px; padding: 6px 8px; width: 100%; }
+.d-more .link { justify-self: start; border: 0; background: none; color: var(--accent); cursor: pointer; font: inherit; font-size: .85rem; padding: 4px 0; }

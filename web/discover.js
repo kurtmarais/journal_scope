@@ -6,7 +6,7 @@
 //   scope mode : journals that publish the most on the topic  (OpenAlex papers, Scopus papers, DOAJ keywords/subjects)
 //
 // Every result is matched against the CREST (DHET subsidy) and SANLiC lists.
-import { h, normaliseIssn, normaliseTitle } from "./report-view.js";
+import { apcTile, h, normaliseIssn, normaliseTitle } from "./report-view.js";
 
 const SOURCE_LABEL = { openalex: "OpenAlex", doaj: "DOAJ", crest: "CREST", scopus: "Scopus" };
 const SOURCES = { title: ["openalex", "doaj", "crest"], scope: ["openalex", "scopus", "doaj"] };
@@ -33,7 +33,7 @@ function fromDoaj(r) {
     homepage: (b.ref || {}).journal || null,
     doaj: { apc: apc.has_apc === false ? "No APC" : price ? `${price.currency} ${price.price.toLocaleString()}` : null,
       weeks: b.publication_time_weeks ?? null, review: ((b.editorial || {}).review_process || [])[0] || null,
-      url: (b.ref || {}).journal || null },
+      url: (b.ref || {}).journal || null, has_apc: apc.has_apc ?? null, prices: apc.max || [] },
   };
 }
 
@@ -167,6 +167,7 @@ function chips(rec) {
   if (rec.sanlic) out.push([rec.sanlic.included ? `SANLiC covered${rec.sanlic.oa_type ? ` (${rec.sanlic.oa_type})` : ""}` : "SANLiC: not covered", rec.sanlic.included ? "good" : "warn"]);
   if (rec.doaj && rec.doaj.apc) out.push([`OA · ${rec.doaj.apc}`, "neutral"]);
   else if (rec.openalex && rec.openalex.is_oa) out.push([`OA${rec.openalex.apc_usd ? ` · USD ${rec.openalex.apc_usd.toLocaleString()}` : ""}`, "neutral"]);
+  else if (rec.openalex && rec.openalex.apc_usd) out.push([`APC USD ${rec.openalex.apc_usd.toLocaleString()} (list)`, "neutral"]);
   return out;
 }
 
@@ -185,37 +186,129 @@ function details(rec, mode) {
 
 const SORTS = {
   relevance: (a, b) => b.score - a.score,
+  h_index: (a, b) => ((b.openalex && b.openalex.h_index) ?? -1) - ((a.openalex && a.openalex.h_index) ?? -1),
+  apc: (a, b) => (apcUsd(a) ?? Infinity) - (apcUsd(b) ?? Infinity),
+  title: (a, b) => a.title.localeCompare(b.title),
   citedness: (a, b) => ((b.openalex && b.openalex.citedness) || -1) - ((a.openalex && a.openalex.citedness) || -1),
   papers: (a, b) => ((b.counts.openalex || 0) + (b.counts.scopus || 0)) - ((a.counts.openalex || 0) + (a.counts.scopus || 0)),
 };
 
-export function renderDiscover(result, onOpen, view = { sort: "relevance", dhet: false, sanlic: false, oa: false }) {
+/** APC in USD as far as the sources know it: 0 = free to publish, null = unknown. */
+export function apcUsd(rec) {
+  if (rec.doaj && rec.doaj.has_apc === false) return 0;
+  const usd = rec.doaj && (rec.doaj.prices || []).find((p) => p.currency === "USD");
+  if (usd && typeof usd.price === "number") return usd.price;
+  if (rec.openalex && typeof rec.openalex.apc_usd === "number") return rec.openalex.apc_usd;
+  return null;
+}
+
+/** A report built from a search result, so it can be saved (and shown) before a full check. */
+export function recordToReport(rec) {
+  const now = Date.now() / 1000;
+  const c = rec.crest;
+  const n = rec.sanlic;
+  const sources = {
+    scopus: { status: "skipped", data: {}, note: "Not checked yet: open the journal and use Check again for its full report." },
+    crest: c ? { status: "found", data: { title: c.title, publisher: c.publisher, issn: c.issn, eissn: c.eissn, journal_id: c.key,
+      status: c.status || "Listed", eligible: eligible(c), reason: c.reason || null } }
+      : rec.listsUnknown ? { status: "skipped", data: {} } : { status: "not_found", data: { eligible: false } },
+    sanlic: n ? { status: "found", data: { title: n.title, included: !!n.included, oa_type: n.oa_type, explanation: n.explanation, publisher: n.publisher } }
+      : rec.listsUnknown ? { status: "skipped", data: {} } : { status: "not_found", data: { included: false } },
+    kanalregister: { status: "skipped", data: {} },
+    journal_site: { status: "skipped", data: {} },
+  };
+  const apc = {};
+  if (rec.openalex) apc.openalex = { apc_usd: rec.openalex.apc_usd ?? null, prices: [], is_oa: !!rec.openalex.is_oa, url: rec.openalex.id || null };
+  if (rec.doaj) apc.doaj = { has_apc: rec.doaj.has_apc ?? null, prices: rec.doaj.prices || [], url: rec.doaj.url || null };
+  sources.apc = Object.keys(apc).length ? { status: "found", data: apc } : { status: "skipped", data: {} };
+  const report = { query: rec.issns[0] || rec.title, quick: true, from_search: true, created_at: now, candidates: [], sources,
+    identity: { title: rec.title, issns: rec.issns, publisher: rec.publisher, country: (rec.openalex && rec.openalex.country) || null,
+      homepage: rec.homepage || null } };
+  const glance = [];
+  if (sources.crest.status === "found") glance.push({ label: "DHET subsidy", value: sources.crest.data.status, tone: sources.crest.data.eligible ? "good" : "bad", source: "crest" });
+  else if (sources.crest.status === "not_found") glance.push({ label: "DHET subsidy", value: "Not on approved list", tone: "bad", source: "crest" });
+  if (n) glance.push({ label: "SANLiC APC agreement", value: n.included ? `Covered${n.oa_type ? ` (${n.oa_type})` : ""}` : "Not covered", tone: n.included ? "good" : "warn", source: "sanlic" });
+  const t = apcTile(report);
+  if (t) glance.push(t);
+  report.glance = glance;
+  return report;
+}
+
+const DEFAULT_VIEW = { sort: "relevance", dhet: false, sanlic: false, oa: false, free: false, maxApc: "", hideUnknownApc: false,
+  minCited: "", inDoaj: false, inScopus: false, publisher: "", country: "", savedOnly: false };
+
+// hooks: { isSaved(rec) -> bool, onStar(rec) -> Promise } — the star appears when onStar is given.
+export function renderDiscover(result, onOpen, view = {}, hooks = {}) {
+  for (const [k, v] of Object.entries(DEFAULT_VIEW)) if (!(k in view)) view[k] = v;
   const box = h("div", { class: "discover" });
+  const countries = [...new Set(result.results.map((r) => r.openalex && r.openalex.country).filter(Boolean))].sort();
+  const keep = (r) => {
+    const apc = apcUsd(r);
+    const cited = r.openalex && r.openalex.citedness;
+    const max = parseFloat(view.maxApc);
+    const min = parseFloat(view.minCited);
+    return (!view.dhet || eligible(r.crest)) && (!view.sanlic || (r.sanlic && r.sanlic.included))
+      && (!view.oa || r.doaj || (r.openalex && r.openalex.is_oa))
+      && (!view.free || apc === 0)
+      && (isNaN(max) || (apc == null ? !view.hideUnknownApc : apc <= max))
+      && (isNaN(min) || (cited != null && cited >= min))
+      && (!view.inDoaj || r.sources.has("doaj") || (r.openalex && r.openalex.in_doaj))
+      && (!view.inScopus || r.sources.has("scopus"))
+      && (!view.publisher || (r.publisher || "").toLowerCase().includes(view.publisher.toLowerCase()))
+      && (!view.country || (r.openalex && r.openalex.country) === view.country)
+      && (!view.savedOnly || (hooks.isSaved && hooks.isSaved(r)));
+  };
   const draw = () => {
-    let rows = result.results.filter((r) => (!view.dhet || eligible(r.crest)) && (!view.sanlic || (r.sanlic && r.sanlic.included))
-      && (!view.oa || (r.doaj || (r.openalex && r.openalex.is_oa))));
-    rows = [...rows].sort(SORTS[view.sort] || SORTS.relevance);
+    const rows = result.results.filter(keep).sort(SORTS[view.sort] || SORTS.relevance);
     const toggle = (key, label) => h("label", { class: "check" },
       h("input", { type: "checkbox", checked: view[key] || null, onchange: (e) => { view[key] = e.target.checked; draw(); } }), label);
-    const sort = h("select", { onchange: (e) => { view.sort = e.target.value; draw(); } },
-      [["relevance", "Most relevant"], ["citedness", "2-yr citedness"], ...(result.mode === "scope" ? [["papers", "Matching papers"]] : [])]
+    const field = (key, label, attrs) => h("label", { class: "d-field" }, label,
+      h("input", { ...attrs, value: view[key], onchange: (e) => { view[key] = e.target.value.trim(); draw(); } }));
+    const sort = h("select", { "aria-label": "Sort by", onchange: (e) => { view.sort = e.target.value; draw(); } },
+      [["relevance", "Most relevant"], ["citedness", "2-yr citedness"], ["h_index", "h-index"], ["apc", "APC (lowest first)"],
+        ["title", "Title A–Z"], ...(result.mode === "scope" ? [["papers", "Matching papers"]] : [])]
         .map(([v, l]) => h("option", { value: v, selected: view.sort === v || null }, l)));
+    const active = ["free", "maxApc", "minCited", "inDoaj", "inScopus", "publisher", "country", "savedOnly"]
+      .filter((k) => view[k] && view[k] !== DEFAULT_VIEW[k]).length;
+    const more = h("details", { class: "d-more", open: view.moreOpen || null, ontoggle: (e) => { view.moreOpen = e.target.open; } },
+      h("summary", {}, `More filters${active ? ` (${active} on)` : ""}`),
+      h("div", { class: "d-more-grid" },
+        toggle("free", "Free to publish (no APC)"),
+        field("maxApc", "Max APC (USD)", { type: "number", min: "0", step: "100", inputmode: "numeric", placeholder: "any" }),
+        toggle("hideUnknownApc", "Hide unknown APC"),
+        field("minCited", "Min 2-yr citedness", { type: "number", min: "0", step: "0.5", inputmode: "decimal", placeholder: "any" }),
+        toggle("inDoaj", "Listed in DOAJ"),
+        result.mode === "scope" && toggle("inScopus", "Found in Scopus"),
+        field("publisher", "Publisher contains", { type: "search", placeholder: "e.g. Elsevier" }),
+        countries.length > 1 && h("label", { class: "d-field" }, "Country",
+          h("select", { onchange: (e) => { view.country = e.target.value; draw(); } },
+            h("option", { value: "" }, "Any"), countries.map((c) => h("option", { value: c, selected: view.country === c || null }, c)))),
+        hooks.isSaved && toggle("savedOnly", "Saved journals only"),
+        h("button", { type: "button", class: "link", onclick: () => { Object.assign(view, DEFAULT_VIEW, { moreOpen: true }); draw(); } }, "Clear filters")));
+    const star = (rec) => {
+      if (!hooks.onStar) return null;
+      const on = hooks.isSaved && hooks.isSaved(rec);
+      return h("button", { type: "button", class: `d-star ${on ? "on" : ""}`, title: on ? "Remove from saved journals" : "Save this journal",
+        "aria-label": on ? "Remove from saved journals" : "Save this journal", "aria-pressed": on ? "true" : "false",
+        onclick: async (e) => { e.stopPropagation(); e.currentTarget.disabled = true; await hooks.onStar(rec); draw(); } }, on ? "★" : "☆");
+    };
     box.replaceChildren(...[
       h("div", { class: "d-head" },
-        h("h2", {}, `${rows.length} journal${rows.length === 1 ? "" : "s"} ${result.mode === "scope" ? "publishing on" : "with titles matching"} “${result.query}”`),
+        h("h2", {}, `${rows.length}${rows.length !== result.results.length ? ` of ${result.results.length}` : ""} journal${result.results.length === 1 ? "" : "s"} ${result.mode === "scope" ? "publishing on" : "with titles matching"} “${result.query}”`),
         h("div", { class: "d-controls" }, sort, toggle("dhet", "DHET eligible"), toggle("sanlic", "SANLiC covered"), toggle("oa", "Open access"))),
+      more,
       result.notes.length > 0 && h("p", { class: "note" }, "Not available this time: " + result.notes.join("; ")),
       h("ul", { class: "d-list" }, rows.length ? rows.map((rec) =>
-        h("li", {}, h("button", { type: "button", class: "d-item", onclick: () => onOpen(rec) },
+        h("li", { class: "d-row" }, h("button", { type: "button", class: "d-item", onclick: () => onOpen(rec) },
           h("b", {}, rec.title),
-          h("small", {}, [rec.publisher, rec.issns[0]].filter(Boolean).join(" · ")),
+          h("small", {}, [rec.publisher, rec.issns[0], rec.openalex && rec.openalex.country].filter(Boolean).join(" · ")),
           h("span", { class: "d-chips" }, chips(rec).map(([t, tone]) => h("span", { class: `tag ${tone}` }, t)),
             [...rec.sources].map((s) => h("span", { class: "tag src" }, SOURCE_LABEL[s]))),
-          details(rec, result.mode) && h("span", { class: "d-meta" }, details(rec, result.mode)))))
-        : [h("li", { class: "note" }, "No journals found. Try fewer or broader keywords.")]),
+          details(rec, result.mode) && h("span", { class: "d-meta" }, details(rec, result.mode))), star(rec)))
+        : [h("li", { class: "note" }, result.results.length ? "No journals match these filters." : "No journals found. Try fewer or broader keywords.")]),
       h("p", { class: "note" }, result.mode === "scope"
-        ? "Ranked by how many papers on the topic each journal published in the last five years. Open a journal for its full check."
-        : "Ranked by how well titles match, across sources. Open a journal for its full check."),
+        ? "Ranked by how many papers on the topic each journal published in the last five years. Open a journal for its full check; ☆ saves it."
+        : "Ranked by how well titles match, across sources. Open a journal for its full check; ☆ saves it."),
     ].filter(Boolean));
   };
   draw();
