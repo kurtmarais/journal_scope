@@ -31,6 +31,8 @@ class FakeFetcher:
             return "<div class='entry-content'>renewed for a further three years (2026-2028).</div>"
         if "sciencedirect.com" in url and url.endswith("/about/insights"):
             return (FIX / "elsevier_insights.html").read_text()
+        if "sciencedirect.com" in url and url.endswith("/publish/guide-for-authors"):
+            return (FIX / "guide_for_authors.html").read_text()
         if "sciencedirect.com" in url:
             return "<html><body>nothing here</body></html>"
         raise FetchError(f"unexpected url {url}")
@@ -86,7 +88,7 @@ def test_full_report(tmp_path):
     r = asyncio.run(build_report(fetcher, "1532-0464", scopus_key="test-key"))
     s = r["sources"]
     assert {k: v["status"] for k, v in s.items()} == {
-        "scopus": "found", "crest": "found", "kanalregister": "found", "sanlic": "found", "journal_site": "found", "apc": "found",
+        "scopus": "found", "crest": "found", "kanalregister": "found", "sanlic": "found", "journal_site": "found", "apc": "found", "guidelines": "found",
     }
     assert s["apc"]["data"]["openalex"]["apc_usd"] == 3550
     tile = next(g for g in r["glance"] if g["label"] == "APC")
@@ -96,6 +98,9 @@ def test_full_report(tmp_path):
     assert s["sanlic"]["data"]["agreement_period"] == "2026-2028"
     assert s["journal_site"]["data"]["metrics"]["apc"]["value"] == "USD 3,550"
     assert s["scopus"]["data"]["best_quartile"] == "Q1"
+    g = s["guidelines"]
+    assert g["status"] == "found" and g["url"].endswith("/publish/guide-for-authors")
+    assert any(l["kind"] == "abstract" and l["value"] == "250 words" for l in g["data"]["limits"])
     labels = [g["label"] for g in r["glance"]]
     assert "CiteScore 2025" in labels
     cs = next(g for g in r["glance"] if g["label"] == "CiteScore 2025")
@@ -153,7 +158,7 @@ def test_hanging_source_times_out_without_blocking_the_report(tmp_path, monkeypa
     k = r["sources"]["kanalregister"]
     assert k["status"] == "error" and "No answer within 0.3 seconds" in k["error"]
     assert r["sources"]["crest"]["status"] == "found" and r["sources"]["journal_site"]["status"] == "found"
-    assert set(r["timings"]) == {"scopus", "crest", "sanlic", "kanalregister", "journal_site", "apc"}
+    assert set(r["timings"]) == {"scopus", "crest", "sanlic", "kanalregister", "journal_site", "apc", "guidelines"}
     assert seen["kanalregister"] == "error" and seen["scopus"] == "found"
 
 

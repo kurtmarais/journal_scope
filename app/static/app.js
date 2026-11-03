@@ -1,4 +1,4 @@
-import { findSaved, h, renderCandidates, renderReport, renderSaved } from "/web/report-view.js";
+import { findSaved, h, missingSections, renderCandidates, renderReport, renderSaved } from "/web/report-view.js";
 import { discover, recordToReport, renderDiscover } from "/web/discover.js";
 
 const $ = (sel) => document.querySelector(sel);
@@ -71,7 +71,8 @@ async function refreshHistory() {
   list.replaceChildren(...items.map((it) => {
     const li = h("li", { "data-uid": it.uid, class: it.uid === current ? "active" : "" },
       h("button", { class: "open", type: "button", title: it.title, onclick: () => openSaved(it.uid) },
-        h("b", {}, it.title || it.query), h("small", {}, [(it.issns || [])[0], dateFmt(it.created_at)].filter(Boolean).join(" · "))),
+        h("b", {}, it.title || it.query), h("small", {}, [(it.issns || [])[0], dateFmt(it.created_at)].filter(Boolean).join(" · "),
+          it.outdated ? h("span", { class: "old", title: "Made before the newest sections were added" }, " · older") : null)),
       h("button", { class: "del", type: "button", title: "Delete report", "aria-label": "Delete report", onclick: () => remove(it.uid) }, "×"));
     return li;
   }));
@@ -81,7 +82,81 @@ async function openSaved(uid) {
   const res = await fetch(`/api/history/${uid}`);
   if (!res.ok) { refreshHistory(); return; }
   setStatus("");
-  show(await res.json());
+  const report = await res.json();
+  show(report, historyExtra(report));
+}
+
+// ---------------------------------------------------- updating older reports
+function historyExtra(report) {
+  const missing = missingSections(report);
+  const btn = h("button", { type: "button", class: "secondary-btn recheck" },
+    missing.length ? "Update this report" : "Check again (update this report)");
+  btn.addEventListener("click", () => updateOne(report.uid, btn));
+  return h("div", { class: "outdated-box" }, btn,
+    missing.length ? h("p", {}, `Made before ${missing.join(", ")} ${missing.length > 1 ? "were" : "was"} added. Updating runs the check again and replaces this report.`) : null);
+}
+
+async function updateOne(uid, btn) {
+  btn.disabled = true;
+  btn.textContent = "Updating…";
+  setStatus("Updating the report…");
+  const poll = setInterval(async () => {
+    try {
+      const p = await (await fetch("/api/progress")).json();
+      if (p.report) $("#out").replaceChildren(renderReport(p.report));
+    } catch { /* ignore */ }
+  }, 900);
+  try {
+    const res = await fetch(`/api/history/${uid}/refresh`, { method: "POST" });
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || `HTTP ${res.status}`);
+    const report = await res.json();
+    setStatus("");
+    await loadSaved();
+    show(report, historyExtra(report));
+    refreshHistory();
+    pollBulk();
+  } catch (err) {
+    setStatus("Update failed: " + err.message, true);
+    openSaved(uid);
+  } finally {
+    clearInterval(poll);
+  }
+}
+
+let bulkTimer = null;
+function renderBulk(st) {
+  const box = $("#bulk");
+  if (st.running) {
+    box.hidden = false;
+    box.replaceChildren(...[h("button", { type: "button", disabled: true }, `Updating ${Math.min(st.done + 1, st.total)} of ${st.total}…`),
+      st.current ? h("p", {}, st.current) : null].filter(Boolean));
+    clearTimeout(bulkTimer);
+    bulkTimer = setTimeout(pollBulk, 2000);
+    return;
+  }
+  const failed = (st.failed || []).length;
+  if (!st.outdated && !failed) { box.hidden = true; box.replaceChildren(); return; }
+  box.hidden = false;
+  const btn = h("button", { type: "button", title: "Run older reports again so they include the newest sections. Each keeps its place in History." },
+    `Update older reports (${st.outdated})`);
+  btn.addEventListener("click", async () => {
+    if (!confirm(`Run ${st.outdated} older report${st.outdated > 1 ? "s" : ""} again so they include the newest sections? This takes about a minute each and runs in the background.`)) return;
+    wasRunning = true;
+    renderBulk(await (await fetch("/api/refresh", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" })).json());
+  });
+  box.replaceChildren(...[st.outdated ? btn : null,
+    failed ? h("p", { title: st.failed.map((f) => `${f.title}: ${f.error}`).join("\n") },
+      `${failed} could not be updated and kept their old report (hover for why).`) : null].filter(Boolean));
+}
+
+let wasRunning = false;
+async function pollBulk() {
+  let st;
+  try { st = await (await fetch("/api/refresh")).json(); } catch { return; }
+  if (wasRunning && !st.running) { refreshHistory(); loadSaved(); }
+  else if (st.running && st.done) refreshHistory();
+  wasRunning = st.running;
+  renderBulk(st);
 }
 
 async function remove(uid) {
@@ -94,7 +169,7 @@ async function run(params) {
   const qs = new URLSearchParams(Object.entries(params).filter(([, v]) => v));
   $("#go").disabled = true;
   $("#out").replaceChildren();
-  const LABELS = { scopus: "Scopus", crest: "CREST", sanlic: "SANLiC", kanalregister: "Kanalregister", journal_site: "Journal website" };
+  const LABELS = { scopus: "Scopus", crest: "CREST", sanlic: "SANLiC", kanalregister: "Kanalregister", journal_site: "Journal website", guidelines: "Author guidelines" };
   const STATE = { working: "checking…", found: "done", not_found: "done", skipped: "skipped", error: "failed" };
   const started = Date.now();
   setStatus("Checking Scopus, CREST, SANLiC, Kanalregister and the journal website…");
@@ -191,9 +266,10 @@ $("#find").addEventListener("submit", async (e) => {
   }
 });
 
-window.journalScope = { refreshHistory: () => { refreshHistory(); loadSaved(); } };
+window.journalScope = { refreshHistory: () => { refreshHistory(); loadSaved(); pollBulk(); } };
 if (new URLSearchParams(location.search).has("desktop")) $("#desk").hidden = false;
 refreshHistory();
+pollBulk();
 loadSaved();
 refreshStatus();
 setInterval(refreshStatus, 15000);

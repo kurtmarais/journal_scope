@@ -245,7 +245,11 @@ class SyncEngine:
             if rep.get("candidates"):
                 client.update_request(req["uid"], {"status": "done", "candidates": rep["candidates"]}, token)
             else:
-                uid = self.db.add_report(rep)
+                target = req.get("report_uid")   # the phone asked to update this report in place
+                if target and self.db.exists(target):
+                    uid = self.db.add_report(rep, uid=target, keep_created=True)
+                else:
+                    uid = self.db.add_report(rep)
                 self._upload_dirty(client, token)
                 client.update_request(req["uid"], {"status": "done", "report_uid": uid}, token)
             looked_up += 1

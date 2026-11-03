@@ -425,3 +425,58 @@ def test_phone_find_star_and_filters(tmp_path):
     finally:
         api.shutdown()
         web.shutdown()
+
+
+def test_phone_updates_older_reports_through_the_pc(tmp_path):
+    fake = FakeSupabase()
+    api, api_url = fake.serve()
+    web, web_url = serve_web(api_url)
+    from app.report import build_report
+    fetcher = FakeFetcher(make_xlsx(tmp_path / "l.xlsx"))
+    db = Database(tmp_path / "pc.db")
+    engine = SyncEngine(db, {}, lambda s: None,
+                        lambda q, sid, site: asyncio.run(build_report(fetcher, q, sid, site)), opener=fake.opener)
+    engine.sign_in(api_url, "sb_publishable_test", EMAIL, PASSWORD)
+    # a report from before the word-limits section existed
+    old = {"query": "1532-0464", "candidates": [], "glance": [],
+           "identity": {"title": "Journal of Biomedical Informatics", "issns": ["1532-0464"]},
+           "sources": {k: {"status": "skipped", "data": {}} for k in ("scopus", "crest", "kanalregister", "sanlic", "journal_site", "apc")}}
+    uid = db.add_report(old)
+    engine.cycle()
+
+    async def run():
+        async with pw.async_playwright() as p:
+            browser = await p.chromium.launch(executable_path=CHROME, args=["--no-sandbox"])
+            ctx = await browser.new_context(viewport={"width": 393, "height": 852}, is_mobile=True, has_touch=True)
+            page = await ctx.new_page()
+            errors = []
+            page.on("pageerror", lambda e: errors.append(str(e)))
+            page.on("dialog", lambda d: asyncio.ensure_future(d.accept()))
+            await page.goto(web_url)
+            await page.fill("input[type=email]", EMAIL)
+            await page.fill("input[type=password]", PASSWORD)
+            await page.click("button:has-text('Sign in')")
+            await page.wait_for_selector("button:has-text('Update 1 older report on my PC')")
+            await page.click(".reports button")
+            await page.wait_for_selector("text=Made before word and page limits was added.")
+            await page.click("button:has-text('Back')")
+            await page.click("button:has-text('Update 1 older report on my PC')")
+            await page.wait_for_selector("text=Waiting for your PC")
+            req = next(iter(fake.tables["journal_requests"].values()))
+            assert req["report_uid"] == uid and req["query"] == "1532-0464"
+            assert not await page.is_visible("button:has-text('older report')")   # not offered twice
+
+            await asyncio.to_thread(engine.cycle)          # the PC runs it and replaces the report
+            await page.reload()
+            await page.click(".reports button")
+            await page.wait_for_selector("h3:has-text('Word and page limits')")
+            assert not await page.is_visible("text=Made before")
+            assert len(db.list_reports()) == 1
+            assert not errors, errors
+            await browser.close()
+
+    try:
+        asyncio.run(run())
+    finally:
+        api.shutdown()
+        web.shutdown()

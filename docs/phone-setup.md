@@ -6,7 +6,7 @@ The phone app checks journals **on its own**, even with the PC off:
 - **CREST's DHET-approved master list:** subsidy status and reason (a list the PC loads into Supabase about weekly)
 - **SANLiC's R&P title list:** APC agreement coverage (likewise)
 
-Two things still need the PC, because they need a browser engine: the **Kanalregister level** and the **journal website statistics** (decision times, acceptance rate, APC). The phone report links to Kanalregister so you can open it yourself, and **Get full report from my PC** queues the complete check for when the PC is on.
+Three things still need the PC, because they need a browser engine: the **Kanalregister level**, the **journal website statistics** (decision times, acceptance rate, APC) and the **word and page limits** from the author guidelines. The phone report links to Kanalregister so you can open it yourself, and **Get full report from my PC** queues the complete check for when the PC is on.
 
 ```
  PC (Journal Scope)  <── sync ──>  Supabase (your project)  <── sync ──>  Phone app
@@ -17,6 +17,7 @@ Two things still need the PC, because they need a browser engine: the **Kanalreg
 - **Saved journals:** tap **☆ Save journal** on any report. **★ Saved journals** (above the report list) shows them in a table; tap one for its report. They are kept in Supabase, so clearing history or reinstalling the app doesn't lose them, and the PC shows the same list.
 - **Finding journals:** the second search bar lists journals for a keyword, by title or by what they publish (scope), each with its DHET and SANLiC status. Tap one for its check.
 - **Full report:** tap **Get full report from my PC**. The PC picks it up within 20 seconds when Journal Scope is running there (the tray counts); otherwise it waits until the PC is next on. Full reports appear in the phone's list.
+- **Older reports** (made before a new section was added) can be updated without searching again: **Update N older reports on my PC** on the home screen, or **Update this report on my PC** on one report. The PC runs them again and replaces them in place.
 - **Reports** checked on the PC appear on the phone within about 20 seconds.
 - **Deleting** a report on either device removes it from both.
 
