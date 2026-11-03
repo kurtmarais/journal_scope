@@ -14,7 +14,7 @@ import uuid
 from contextlib import contextmanager
 from pathlib import Path
 
-from .util import journal_key, normalise_title
+from .util import journal_key, normalise_title, outdated
 
 SCHEMA = """
 create table if not exists reports (
@@ -63,16 +63,22 @@ class Database:
                 conn.close()
 
     # ------------------------------------------------------------ reports
-    def add_report(self, report: dict, uid: str | None = None) -> str:
+    def add_report(self, report: dict, uid: str | None = None, keep_created: bool = False) -> str:
+        """Store a report; with `uid` it replaces that report (keeping its place in history if `keep_created`)."""
         uid = uid or uuid.uuid4().hex
         now = time.time()
         ident = report.get("identity") or {}
+        report = {k: v for k, v in report.items() if k not in ("uid", "created_at", "saved")}
         with self._conn() as c:
+            created = now
+            if keep_created:
+                cur = c.execute("select created_at from reports where uid = ?", (uid,)).fetchone()
+                created = cur["created_at"] if cur else now
             c.execute(
                 "insert or replace into reports (uid, query, title, issns, report, deleted, dirty, created_at, updated_at)"
                 " values (?, ?, ?, ?, ?, 0, 1, ?, ?)",
                 (uid, report.get("query", ""), ident.get("title") or report.get("query", ""),
-                 json.dumps(ident.get("issns") or []), json.dumps(report), now, now),
+                 json.dumps(ident.get("issns") or []), json.dumps(report), created, now),
             )
         self.refresh_saved(report)   # a starred journal keeps its newest full report
         return uid
@@ -87,8 +93,18 @@ class Database:
             rep = json.loads(r["report"])
             out.append({"uid": r["uid"], "query": r["query"], "title": r["title"],
                         "issns": json.loads(r["issns"]), "created_at": r["created_at"],
-                        "glance": rep.get("glance", [])})
+                        "glance": rep.get("glance", []), "outdated": outdated(rep)})
         return out
+
+    def exists(self, uid: str) -> bool:
+        with self._conn() as c:
+            return c.execute("select 1 from reports where uid = ? and deleted = 0", (uid,)).fetchone() is not None
+
+    def outdated_uids(self) -> list[str]:
+        """Reports made before the newest sections were added, newest first."""
+        with self._conn() as c:
+            rows = c.execute("select uid, report from reports where deleted = 0 order by created_at desc").fetchall()
+        return [r["uid"] for r in rows if outdated(json.loads(r["report"]))]
 
     def get_report(self, uid: str) -> dict | None:
         with self._conn() as c:

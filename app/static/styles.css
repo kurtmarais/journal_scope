@@ -47,3 +47,12 @@ select { font: inherit; color: var(--ink); background: var(--bg); border: 1px so
 .saved-btn:hover, .saved-btn.active { border-color: #d9a400; background: #fff6d6; color: #8a6400; }
 @media (prefers-color-scheme: dark) { .saved-btn:hover, .saved-btn.active { background: #3a2f12; color: #f0c66b; } }
 #savedCount { color: var(--muted); font-weight: 400; }
+
+.bulk { margin: 0 12px 8px; font-size: .84rem; color: var(--muted); }
+.bulk button { width: 100%; font: inherit; font-weight: 600; border: 1px solid var(--accent); border-radius: 8px; padding: 6px 10px;
+  background: var(--panel); color: var(--accent); cursor: pointer; }
+.bulk button:disabled { opacity: .6; cursor: default; }
+.bulk p { margin: 4px 0 0; }
+.history .open small .old { color: var(--warn, #b26b00); }
+.outdated-box { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-top: 8px; }
+.outdated-box p { margin: 0; color: var(--muted); font-size: .9rem; }

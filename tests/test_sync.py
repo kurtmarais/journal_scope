@@ -121,3 +121,21 @@ def test_missing_saved_table_does_not_break_sync(setup):
     db.add_report(dict(REPORT))
     result = engine.cycle()
     assert result["uploaded"] >= 1 and "20261105090000_saved_journals.sql" in result["saved_error"]
+
+
+def test_phone_update_request_replaces_the_report_in_place(setup):
+    fake, db, engine, calls, _ = setup
+    old = dict(REPORT, sources={"scopus": {"status": "found", "data": {}}})
+    uid = db.add_report(old)
+    created = db.get_report(uid)["created_at"]
+    engine.cycle()
+    t = time.time()
+    fake.tables["journal_requests"]["u1"] = {"uid": "u1", "query": "1532-0464", "sid": None, "site": None, "status": "pending",
+                                             "deleted": False, "created_at": t, "updated_at": t, "server_updated_at": fake._stamp(),
+                                             "report_uid": uid, "candidates": None, "error": None}
+    engine.cycle()
+    assert fake.tables["journal_requests"]["u1"]["report_uid"] == uid and fake.tables["journal_requests"]["u1"]["status"] == "done"
+    assert len(db.list_reports()) == 1                  # replaced, not added
+    rep = db.get_report(uid)
+    assert rep["created_at"] == created and rep["sources"] == {}   # the new lookup's report, same place in history
+    assert fake.tables["journal_reports"][uid]["report"]["sources"] == {}

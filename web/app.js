@@ -2,11 +2,11 @@
 // Reads reports your PC has produced (synced through your Supabase project) and
 // queues new lookups, which the PC runs the next time it syncs.
 import { SUPABASE_KEY, SUPABASE_URL } from "./config.js";
-import { apcFromSources, findSaved, h, journalKey, normaliseIssn, normaliseTitle, parseScopusEntry, renderSaved, quickReport, renderCandidates, renderReport, scopusCandidates, scopusEntries } from "./report-view.js";
+import { apcFromSources, findSaved, h, journalKey, missingSections, normaliseIssn, normaliseTitle, parseScopusEntry, renderSaved, quickReport, renderCandidates, renderReport, scopusCandidates, scopusEntries } from "./report-view.js";
 import { AuthError, Supabase, SyncError } from "./supabase.js";
 import { discover, recordToReport, renderDiscover } from "./discover.js";
 
-const APP_VERSION = "2026.11.8";   // shown at the bottom of the home screen; bump with each phone change
+const APP_VERSION = "2026.11.9";   // shown at the bottom of the home screen; bump with each phone change
 const root = document.getElementById("root");
 const LS = {
   get: (k, d = null) => { try { const v = localStorage.getItem("js." + k); return v === null ? d : JSON.parse(v); } catch { return d; } },
@@ -115,8 +115,9 @@ function schedule() {
 }
 document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") sync(); else clearTimeout(timer); });
 
-async function requestLookup(query, site, sid = null) {
+async function requestLookup(query, site, sid = null, reportUid = null) {
   const row = { uid: uid(), query, site: site || null, sid, status: "pending", created_at: now(), updated_at: now() };
+  if (reportUid) row.report_uid = reportUid;   // the PC replaces that report instead of adding a new one
   try {
     await sb().insert("journal_requests", row, await token());
     state.requests[row.uid] = row;
@@ -365,6 +366,8 @@ function homeScreen() {
     findForm(),
     h("button", { class: "saved-btn", onclick: () => { state.back = null; state.view = { name: "saved" }; render(); window.scrollTo(0, 0); } },
       `★ Saved journals${savedList().length ? ` (${savedList().length})` : ""}`),
+    outdatedReports().length > 0 && h("button", { class: "secondary update-old", onclick: () => updateOlderReports(outdatedReports()) },
+      `Update ${outdatedReports().length} older report${outdatedReports().length > 1 ? "s" : ""} on my PC`),
     reqs.length > 0 && h("ul", { class: "requests" }, reqs.map(requestRow)),
     filterBox, list,
     h("p", { class: "foot" }, state.error ? h("span", { class: "err" }, state.error) : state.lastSync ? `Synced ${timeFmt(state.lastSync)}` : "Syncing…",
@@ -440,10 +443,33 @@ function savedReportScreen(uid) {
     h("p", { class: "foot" }, `Saved ${dateFmt(item.created_at)}${rep.quick ? " from a quick check" : ""}.`));
 }
 
+const redoQuery = (rep) => ((rep.identity || {}).issns || [])[0] || (rep.identity || {}).title || rep.query || "";
+const pendingUpdate = (reportUid) => Object.values(state.requests).some((r) => r.report_uid === reportUid && r.status !== "done" && r.status !== "error");
+const outdatedReports = () => Object.values(state.reports).filter((r) => r.report && missingSections(r.report).length && !pendingUpdate(r.uid));
+
+async function updateOlderReports(rows) {
+  if (!confirm(`Ask your PC to run ${rows.length} older report${rows.length > 1 ? "s" : ""} again so they include the newest sections?`)) return;
+  const t = await token();
+  let sent = 0;
+  for (const r of rows) {
+    const row = { uid: uid(), query: redoQuery(r.report), site: null, sid: null, report_uid: r.uid, status: "pending", created_at: now(), updated_at: now() };
+    try { await sb().insert("journal_requests", row, t); state.requests[row.uid] = row; sent++; }
+    catch (e) { state.error = "Could not send the request: " + e.message; break; }
+  }
+  save();
+  render();
+  if (sent) sync();
+}
+
 function reportScreen(id) {
   const row = state.reports[id];
   if (!row) { state.view = { name: "home" }; return homeScreen(); }
+  const missing = missingSections(row.report);
   return h("div", {}, backBar(),
+    missing.length > 0 && h("div", { class: "outdated" },
+      h("p", { class: "note" }, `Made before ${missing.join(", ")} ${missing.length > 1 ? "were" : "was"} added.`),
+      pendingUpdate(id) ? h("p", { class: "note" }, "Update requested; your PC will replace this report.")
+        : h("button", { class: "secondary", onclick: () => requestLookup(redoQuery(row.report), "", null, id) }, "Update this report on my PC")),
     renderReport(row.report, starOpts(row.report)),
     h("p", { class: "foot" }, `Checked ${dateFmt(row.created_at)} on your PC.`),
     h("button", { class: "danger", onclick: () => deleteReport(id) }, "Delete report"));

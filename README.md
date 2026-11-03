@@ -13,6 +13,8 @@ Checks a journal's validity and credibility for publication by pulling, in one r
 
 **Saved journals:** the ☆ on a report stars the journal. **★ Saved journals** (above History) opens a table of them: CiteScore and quartile, DHET, SANLiC, Norwegian level, APC, first-decision time and acceptance rate. Click one for its full report, with **Check again** to refresh it. Saved journals are kept apart from history (clearing history doesn't remove them), keep their newest full report automatically, and sync with the phone.
 
+**Updating older reports:** when a new section is added to the report, older reports in History are marked *older*. **Update older reports (N)** above History runs them again in the background (about a minute each) and replaces each one in place, keeping its place in History; **Update this report** does one. The phone offers the same, carried out by the PC. Saved journals pick up the updated report automatically.
+
 **Word and page limits:** the desktop app reads the journal's author guidelines (known pages for Elsevier, Springer, MDPI, Taylor & Francis, Frontiers, SAGE and Wiley; otherwise the homepage's "Guide for authors" link) and lists each sentence that states a limit, with the section it sits under. Limits usually differ by article type, so the wording is shown rather than one number. On the phone this needs the full report from the PC.
 
 **APC:** each report shows the APC as stated by the journal's website, by DOAJ (open-access journals) and as OpenAlex's list price, plus whether SANLiC covers it. List prices can differ from what you are charged.

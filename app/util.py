@@ -76,3 +76,19 @@ def journal_key(report: dict) -> str:
     if issns:
         return issns[0]
     return "t:" + normalise_title(ident.get("title") or report.get("query") or "")
+
+
+# Sections of a full report. Bump when a source is added, so older reports can be updated.
+REPORT_SECTIONS = ("scopus", "crest", "kanalregister", "sanlic", "journal_site", "apc", "guidelines")
+
+
+def outdated(report: dict) -> bool:
+    """True for a full report made before one of the current sections existed."""
+    sources = (report or {}).get("sources") or {}
+    return bool(sources) and not report.get("candidates") and not report.get("quick") and any(k not in sources for k in REPORT_SECTIONS)
+
+
+def refresh_query(report: dict) -> str:
+    """What to search for to redo a report: its first ISSN (unambiguous), else its title or query."""
+    ident = report.get("identity") or {}
+    return ((ident.get("issns") or [None])[0] or ident.get("title") or report.get("query") or "").strip()

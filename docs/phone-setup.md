@@ -17,6 +17,7 @@ Three things still need the PC, because they need a browser engine: the **Kanalr
 - **Saved journals:** tap **☆ Save journal** on any report. **★ Saved journals** (above the report list) shows them in a table; tap one for its report. They are kept in Supabase, so clearing history or reinstalling the app doesn't lose them, and the PC shows the same list.
 - **Finding journals:** the second search bar lists journals for a keyword, by title or by what they publish (scope), each with its DHET and SANLiC status. Tap one for its check.
 - **Full report:** tap **Get full report from my PC**. The PC picks it up within 20 seconds when Journal Scope is running there (the tray counts); otherwise it waits until the PC is next on. Full reports appear in the phone's list.
+- **Older reports** (made before a new section was added) can be updated without searching again: **Update N older reports on my PC** on the home screen, or **Update this report on my PC** on one report. The PC runs them again and replaces them in place.
 - **Reports** checked on the PC appear on the phone within about 20 seconds.
 - **Deleting** a report on either device removes it from both.
 

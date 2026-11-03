@@ -212,6 +212,18 @@ function siteCard(r) {
   return card("Journal website", "Days to decision, acceptance rate and APC as stated by the journal.", r, body, { site: "journal site", wide: true });
 }
 
+// ------------------------------------------------- older reports
+// Sections of a full report, with the name used when telling the user what an older report lacks.
+// Keep in step with REPORT_SECTIONS in app/util.py.
+export const REPORT_SECTIONS = { scopus: "Scopus", crest: "CREST", kanalregister: "Kanalregister", sanlic: "SANLiC",
+  journal_site: "journal statistics", apc: "APC", guidelines: "word and page limits" };
+
+export function missingSections(report) {
+  const s = (report && report.sources) || {};
+  if (!Object.keys(s).length || (report.candidates || []).length || report.quick) return [];
+  return Object.keys(REPORT_SECTIONS).filter((k) => !s[k]).map((k) => REPORT_SECTIONS[k]);
+}
+
 // ------------------------------------------------------- length limits
 function limitsCard(report) {
   const r = (report.sources || {}).guidelines;

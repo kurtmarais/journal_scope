@@ -7,6 +7,7 @@ import pytest
 
 from app import discover
 from app.lists import LocalLists
+from app.storage import Database
 from tests.reflist_samples import crest_xlsx, sanlic_xlsx
 
 FIX = Path(__file__).parent / "fixtures"
@@ -157,4 +158,58 @@ def test_saved_endpoints(tmp_path):
             assert c.post("/api/saved", json={}).status_code == 400
     finally:
         del os.environ["JOURNAL_SCOPE_DATA_DIR"]
+        main.app.state.db = None
+
+
+def test_update_older_reports(tmp_path, monkeypatch):
+    import time as _t
+
+    from fastapi.testclient import TestClient
+
+    import app.main as main
+    from app.util import REPORT_SECTIONS
+
+    calls = []
+
+    async def fake_build(fetcher, q, **kw):
+        calls.append(q)
+        if q == "Nature":
+            return {"query": q, "candidates": [{"source_id": "1"}, {"source_id": "2"}], "sources": {}}
+        return {"query": q, "candidates": [], "glance": [], "identity": {"title": "JBI", "issns": [q]},
+                "sources": {k: {"status": "found", "data": {}} for k in REPORT_SECTIONS}}
+
+    monkeypatch.setattr(main, "build_report", fake_build)
+    main.app.state.db = Database(tmp_path / "h.db")
+    main.app.state.lists_dir = tmp_path
+    db = main.app.state.db
+    old = {"query": "x", "identity": {"title": "JBI", "issns": ["1532-0464"]}, "sources": {"scopus": {"status": "found", "data": {}}}}
+    a = db.add_report(old)
+    b = db.add_report({"query": "Nature", "identity": {"title": "Nature", "issns": []}, "sources": {"crest": {}}})
+    current = db.add_report({"query": "y", "identity": {"title": "Y", "issns": ["1111-1111"]},
+                             "sources": {k: {} for k in REPORT_SECTIONS}})
+    created_a = db.get_report(a)["created_at"]
+    try:
+        with TestClient(main.app) as c:
+            st = c.get("/api/refresh").json()
+            assert st["outdated"] == 2 and not st["running"]
+            hist = {i["uid"]: i["outdated"] for i in c.get("/api/history").json()}
+            assert hist == {a: True, b: True, current: False}
+            c.post("/api/refresh", json={})
+            for _ in range(50):
+                st = c.get("/api/refresh").json()
+                if not st["running"]:
+                    break
+                _t.sleep(0.05)
+            assert st["done"] == 2 and st["outdated"] == 1
+            assert [f["uid"] for f in st["failed"]] == [b] and "several journals" in st["failed"][0]["error"]
+            assert sorted(calls) == ["1532-0464", "Nature"]          # by ISSN when there is one
+            rep = db.get_report(a)
+            assert set(rep["sources"]) == set(REPORT_SECTIONS) and rep["created_at"] == created_a
+            assert len(db.list_reports()) == 3                        # replaced in place
+            # one report, from the report view
+            r = c.post(f"/api/history/{b}/refresh")
+            assert r.status_code == 409
+            assert c.post(f"/api/history/{current}/refresh").json()["uid"] == current
+            assert c.post("/api/history/nope/refresh").status_code == 404
+    finally:
         main.app.state.db = None
