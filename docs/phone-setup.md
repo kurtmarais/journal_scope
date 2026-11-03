@@ -63,7 +63,7 @@ CiteScore quartiles need institutional access. Elsevier grants it to requests fr
 
 1. https://dash.cloudflare.com → **Workers & Pages → Create → Import a repository** → choose `journal_scope`.
 2. Branch: `claude/upbeat-cerf-mntinq` (or `main` once merged). Leave the build command empty; the deploy command is `npx wrangler deploy` (it reads `wrangler.jsonc`, which serves `web/`).
-3. Deploy. You get an address like `https://journal-scope-phone.<you>.workers.dev`. Every push to that branch redeploys it.
+3. Deploy. You get an address like `https://journal-scope.<you>.workers.dev`. Every push to that branch redeploys it.
 
 Optional: protect the address with **Zero Trust → Access** (allow only your email), as with Sidebar.
 
