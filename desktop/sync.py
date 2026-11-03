@@ -250,11 +250,31 @@ class SyncEngine:
                 client.update_request(req["uid"], {"status": "done", "report_uid": uid}, token)
             looked_up += 1
 
+        saved_error = None
+        try:
+            saved = self.db.dirty_saved()
+            if saved:
+                client.upsert("journal_saved", [{k: r[k] for k in REPORT_FIELDS if k in r} for r in saved], token)
+                self.db.mark_clean_saved([(r["uid"], r["updated_at"]) for r in saved])
+            cur = self.settings.get("sync_cursor_saved", "")
+            for row in client.changes_since("journal_saved", cur, token):
+                if self.db.merge_remote_saved(row):
+                    downloaded += 1
+                cur = row.get("server_updated_at") or cur
+            if cur != self.settings.get("sync_cursor_saved", ""):
+                self.settings["sync_cursor_saved"] = cur
+                self._save(self.settings)
+        except AuthError:
+            raise
+        except SyncError as exc:
+            saved_error = ("run supabase/migrations/20261105090000_saved_journals.sql in Supabase"
+                           if "journal_saved" in str(exc) or "404" in str(exc) else str(exc))
+
         lists = None
         from . import reflists   # imported on first use: keeps start-up fast
         if self.get_bytes and (self.force_lists or reflists.due(self.settings)):
             lists = self.refresh_lists(client)
-        return {"uploaded": uploaded, "downloaded": downloaded, "looked_up": looked_up, "lists": lists}
+        return {"uploaded": uploaded, "downloaded": downloaded, "looked_up": looked_up, "lists": lists, "saved_error": saved_error}
 
     def refresh_lists(self, client: SupabaseClient | None = None) -> dict[str, str]:
         """Reload the reference lists the phone searches (about weekly)."""

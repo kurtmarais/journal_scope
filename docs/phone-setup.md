@@ -14,6 +14,7 @@ Two things still need the PC, because they need a browser engine: the **Kanalreg
 ```
 
 - **Checking on the phone:** type a title or ISSN and tap **Check journal**. The result is instant and comes from the lists. If a title matches several journals you choose one.
+- **Saved journals:** tap **☆ Save journal** on any report. **★ Saved journals** (above the report list) shows them in a table; tap one for its report. They are kept in Supabase, so clearing history or reinstalling the app doesn't lose them, and the PC shows the same list.
 - **Finding journals:** the second search bar lists journals for a keyword, by title or by what they publish (scope), each with its DHET and SANLiC status. Tap one for its check.
 - **Full report:** tap **Get full report from my PC**. The PC picks it up within 20 seconds when Journal Scope is running there (the tray counts); otherwise it waits until the PC is next on. Full reports appear in the phone's list.
 - **Reports** checked on the PC appear on the phone within about 20 seconds.
@@ -26,8 +27,9 @@ Journal Scope uses its **own Supabase project** (`journal_scope`), separate from
 1. In Supabase, open the **journal_scope** project, then **SQL Editor**, then **New query**.
 2. Paste the contents of [`supabase/migrations/20261103090000_journal_scope.sql`](../supabase/migrations/20261103090000_journal_scope.sql) and click **Run**.
 3. New query again: paste [`supabase/migrations/20261104090000_reference_lists.sql`](../supabase/migrations/20261104090000_reference_lists.sql) and click **Run**.
+4. New query again: paste [`supabase/migrations/20261105090000_saved_journals.sql`](../supabase/migrations/20261105090000_saved_journals.sql) and click **Run** (saved/starred journals).
 
-This creates `journal_reports`, `journal_requests` and the list tables (`ref_crest`, `ref_sanlic`, `ref_lists`) with row-level security. A signed-in account can only see or change its own rows, and signed-out requests get nothing. It is safe to run again.
+This creates `journal_reports`, `journal_requests`, `journal_saved` and the list tables (`ref_crest`, `ref_sanlic`, `ref_lists`) with row-level security. A signed-in account can only see or change its own rows, and signed-out requests get nothing. It is safe to run again.
 
 ## 2. Create your account and lock sign-ups (one time)
 
@@ -92,6 +94,7 @@ An earlier version used Sidebar's Supabase project. If you ran the Journal Scope
 ```sql
 drop table if exists public.journal_reports;
 drop table if exists public.journal_requests;
+drop table if exists public.journal_saved;
 drop table if exists public.ref_scimago, public.ref_crest, public.ref_sanlic, public.ref_lists;
 drop function if exists public.journal_scope_newest_wins();
 ```

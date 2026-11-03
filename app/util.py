@@ -67,3 +67,12 @@ def to_float(value: str | None) -> float | None:
         return float(str(value).replace(",", "").strip())
     except ValueError:
         return None
+
+
+def journal_key(report: dict) -> str:
+    """Stable id for a journal: its first ISSN (sorted), else "t:" + normalised title."""
+    ident = report.get("identity") or {}
+    issns = sorted(i for i in (normalise_issn(x) for x in ident.get("issns") or []) if i)
+    if issns:
+        return issns[0]
+    return "t:" + normalise_title(ident.get("title") or report.get("query") or "")

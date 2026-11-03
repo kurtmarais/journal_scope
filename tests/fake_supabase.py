@@ -18,11 +18,12 @@ from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 EMAIL, PASSWORD = "me@example.org", "correct horse"
-TABLES = ("journal_reports", "journal_requests", "ref_crest", "ref_sanlic", "ref_lists")
+TABLES = ("journal_reports", "journal_requests", "journal_saved", "ref_crest", "ref_sanlic", "ref_lists")
 DEFAULTS = {
     "journal_reports": {"query": "", "title": "", "issns": [], "report": {}, "deleted": False},
     "journal_requests": {"query": "", "sid": None, "site": None, "status": "pending", "report_uid": None,
                          "candidates": None, "error": None, "deleted": False},
+    "journal_saved": {"title": "", "issns": [], "report": {}, "deleted": False},
 }
 PK = {t: ("key" if t.startswith("ref_") else "uid") for t in TABLES}
 
@@ -141,6 +142,11 @@ class FakeSupabase:
         from pathlib import Path
         fix = Path(__file__).parent / "fixtures"
         self.discover_calls = getattr(self, "discover_calls", []) + [dict(q)]
+        if q.get("mode") == "issn":
+            if q.get("source") == "openalex":
+                srcs = [s for s in json.loads((fix / "openalex_title.json").read_text())["sources"] if q.get("q") in (s.get("issn") or [])]
+                return 200, {"sources": srcs[:1]}
+            return 200, {"results": []}
         if q.get("source") == "openalex":
             return 200, json.loads((fix / ("openalex_scope.json" if q.get("mode") == "scope" else "openalex_title.json")).read_text())
         if q.get("source") == "doaj":

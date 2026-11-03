@@ -99,3 +99,25 @@ def test_client_paginates(setup):
         assert len(client.changes_since("journal_reports", "", engine._token())) == 3
     finally:
         s.PAGE = old
+
+
+def test_saved_journals_sync_both_ways(setup):
+    fake, db, engine, _, _ = setup
+    uid = db.save_journal(dict(REPORT))
+    engine.cycle()
+    assert fake.tables["journal_saved"][uid]["title"] == "Journal of Biomedical Informatics"
+    assert db.dirty_saved() == []
+    # starred on the phone
+    fake.tables["journal_saved"]["2168-2194"] = {"uid": "2168-2194", "title": "IEEE JBHI", "issns": ["2168-2194"], "report": {"query": "x"},
+                                                 "deleted": False, "created_at": 9e9, "updated_at": 9e9, "server_updated_at": fake._stamp()}
+    engine.cycle()
+    assert {s["uid"] for s in db.list_saved()} == {uid, "2168-2194"}
+
+
+def test_missing_saved_table_does_not_break_sync(setup):
+    fake, db, engine, _, _ = setup
+    del fake.tables["journal_saved"]
+    db.save_journal(dict(REPORT))
+    db.add_report(dict(REPORT))
+    result = engine.cycle()
+    assert result["uploaded"] >= 1 and "20261105090000_saved_journals.sql" in result["saved_error"]

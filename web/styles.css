@@ -39,3 +39,6 @@ button { font: inherit; cursor: pointer; }
 .primary.wide { width: 100%; margin-top: 8px; }
 .ask.find { border-top: 1px solid var(--line); padding-top: 12px; }
 select.mode { font: inherit; font-size: 16px; color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; width: 100%; }
+.saved-btn { width: 100%; text-align: left; font-weight: 650; border: 1px solid #d9a400; border-radius: 12px; padding: 11px 14px;
+  background: #fff6d6; color: #8a6400; margin: 4px 0 12px; }
+@media (prefers-color-scheme: dark) { .saved-btn { background: #3a2f12; color: #f0c66b; border-color: #8a6400; } }

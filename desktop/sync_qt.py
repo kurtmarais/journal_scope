@@ -57,6 +57,8 @@ class SyncController(QObject):
                 if lists:
                     failed = [k for k, v in lists.items() if not v.startswith("ok")]
                     note += f"; phone lists: {'reloaded' if not failed else 'failed for ' + ', '.join(failed)}"
+                if result.get("saved_error"):
+                    note += f"; saved journals not syncing ({result['saved_error']})"
                 self._set(f"Synced {time.strftime('%H:%M')}{note}")
             except AuthError as exc:
                 self._set(f"Phone sync: sign in again ({exc})")

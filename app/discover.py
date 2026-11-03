@@ -47,9 +47,23 @@ async def _json(fetcher: Fetcher, url: str, headers: dict | None = None) -> dict
         raise DiscoverError("unexpected answer") from exc
 
 
+ISSN_RE = re.compile(r"^\d{4}-\d{3}[\dX]$")
+
+
 async def openalex(fetcher: Fetcher, mode: str, q: str, key: str | None = None) -> dict:
-    q = clean_query(q)
     extra = {"api_key": key} if key else {}
+    if mode == "issn":   # one journal by ISSN (used for its APC)
+        issn = q.strip().upper()
+        if not ISSN_RE.match(issn):
+            raise DiscoverError("not an ISSN")
+        url = f"{OPENALEX}/sources/issn:{issn}" + (f"?{urlencode(extra)}" if extra else "")
+        try:
+            return {"sources": [await _json(fetcher, url)]}
+        except DiscoverError as exc:
+            if "404" in str(exc):
+                return {"sources": []}
+            raise
+    q = clean_query(q)
     if mode == "title":
         url = f"{OPENALEX}/sources?" + urlencode({"search": q, "filter": "type:journal", "per-page": 50, **extra})
         return {"sources": (await _json(fetcher, url)).get("results", [])}
@@ -67,6 +81,13 @@ async def openalex(fetcher: Fetcher, mode: str, q: str, key: str | None = None) 
 
 
 async def doaj(fetcher: Fetcher, mode: str, q: str) -> dict:
+    from urllib.parse import quote
+    if mode == "issn":
+        issn = q.strip().upper()
+        if not ISSN_RE.match(issn):
+            raise DiscoverError("not an ISSN")
+        url = DOAJ + quote(f'bibjson.pissn:"{issn}" OR bibjson.eissn:"{issn}"', safe="") + "?pageSize=5"
+        return {"results": (await _json(fetcher, url)).get("results", [])}
     words = clean_query(q).split()
     if not words:
         return {"results": []}

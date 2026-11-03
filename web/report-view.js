@@ -212,6 +212,64 @@ function siteCard(r) {
   return card("Journal website", "Days to decision, acceptance rate and APC as stated by the journal.", r, body, { site: "journal site", wide: true });
 }
 
+// ------------------------------------------------------------------ APC
+const priceText = (p) => (p && typeof p.price === "number" ? `${p.currency || ""} ${p.price.toLocaleString("en-US")}`.trim() : "");
+
+export function apcFromSources(openalexSource, doajResult) {
+  const data = {};
+  if (openalexSource) {
+    data.openalex = { apc_usd: openalexSource.apc_usd ?? null, is_oa: !!openalexSource.is_oa, url: openalexSource.id || null,
+      prices: (openalexSource.apc_prices || []).filter((p) => p.price != null).map((p) => ({ price: p.price, currency: p.currency })) };
+  }
+  if (doajResult) {
+    const b = doajResult.bibjson || {};
+    const apc = b.apc || {};
+    data.doaj = { has_apc: apc.has_apc ?? null, prices: apc.max || [], url: apc.url || (b.ref || {}).oa_statement || null,
+      waiver: (b.waiver || {}).has_waiver ?? null };
+  }
+  return data;
+}
+
+export function apcTile(report) {
+  const s = report.sources || {};
+  const site = (((s.journal_site || {}).data || {}).metrics || {}).apc;
+  const a = (s.apc || {}).data || {};
+  const covered = (s.sanlic || {}).status === "found" && s.sanlic.data.included;
+  let value = null, source = null;
+  if (site) { value = site.value; source = "journal_site"; }
+  else if (a.doaj) {
+    const usd = a.doaj.prices.find((p) => p.currency === "USD") || a.doaj.prices[0];
+    value = a.doaj.has_apc === false ? "No APC" : priceText(usd) || null;
+    source = "doaj";
+  }
+  if (!value && a.openalex && a.openalex.apc_usd) { value = `USD ${a.openalex.apc_usd.toLocaleString("en-US")} (list price)`; source = "openalex"; }
+  if (!value) return null;
+  if (covered && value !== "No APC") value += " · SANLiC covered";
+  return { label: "APC", value, tone: covered || value === "No APC" ? "good" : "neutral", source };
+}
+
+function apcCard(report) {
+  const s = report.sources || {};
+  const r = s.apc;
+  const site = (((s.journal_site || {}).data || {}).metrics || {}).apc;
+  if (!r && !site) return null;               // reports made before APC was added
+  const a = (r && r.data) || {};
+  const sanl = s.sanlic || {};
+  const rows = [
+    ["Stated by the journal", site ? [site.value, " ", h("span", { class: "ctx" }, "("), link(site.url, "page"), h("span", { class: "ctx" }, ")")] : ""],
+    ["DOAJ", a.doaj ? [a.doaj.has_apc === false ? "No APC: free to publish" : a.doaj.prices.map(priceText).join(" · ") || "Has an APC (amount not listed)",
+      a.doaj.waiver ? h("span", { class: "ctx" }, " · waivers available") : null, a.doaj.url ? [" ", link(a.doaj.url, "details")] : null] : ""],
+    ["OpenAlex list price", a.openalex ? (a.openalex.prices.length ? a.openalex.prices.map(priceText).join(" · ")
+      : a.openalex.apc_usd ? `USD ${a.openalex.apc_usd.toLocaleString("en-US")}` : "Not listed") : ""],
+    ["SANLiC agreement", sanl.status === "found"
+      ? (sanl.data.included ? `Covered (${sanl.data.oa_type || "R&P"}): no APC or a discount for authors at participating institutions` : "Not covered")
+      : sanl.status === "not_found" ? "Not covered" : ""],
+  ];
+  const card_r = r || { status: "found", data: {} };
+  return card("APC (article processing charge)", "What publishing open access costs, by source. List prices can differ from what you are charged.",
+    card_r, kv(rows), { chip: (() => { const t = apcTile(report); return t ? [t.value.replace(" · SANLiC covered", ""), t.tone] : null; })() || undefined });
+}
+
 // ---------------------------------------------------- templates & guidelines
 // Links only, built from the journal's name, publisher and homepage.
 const PUBLISHERS = [
@@ -295,7 +353,8 @@ export function glanceTiles(glance) {
       h("div", { class: "l" }, g.label), h("div", { class: "v" }, g.value), h("div", { class: "s" }, g.source.replace("_", " ")))));
 }
 
-export function renderReport(report) {
+// opts: { saved: bool, onStar: () => void, extra: Node } — the star button appears when onStar is given.
+export function renderReport(report, opts = {}) {
   const id = report.identity || {};
   const s = report.sources;
   const meta = join([
@@ -304,12 +363,17 @@ export function renderReport(report) {
     id.homepage ? link(id.homepage, "homepage") : "",
   ].filter(Boolean));
   return h("div", { class: "report" },
-    h("div", { class: "identity" }, h("h2", {}, id.title || report.query), h("div", { class: "meta" }, meta)),
+    h("div", { class: "identity" },
+      h("div", { class: "id-row" }, h("h2", {}, id.title || report.query),
+        opts.onStar && h("button", { type: "button", class: `star ${opts.saved ? "on" : ""}`, onclick: opts.onStar,
+          "aria-pressed": opts.saved ? "true" : "false", title: opts.saved ? "Remove from saved journals" : "Save this journal" },
+          opts.saved ? "★ Saved" : "☆ Save journal")),
+      h("div", { class: "meta" }, meta), opts.extra || null),
     glanceTiles(report.glance),
     report.timings && Object.keys(report.timings).length > 0 && h("p", { class: "timings" },
-      "Time taken: " + Object.entries(report.timings).map(([k, v]) => `${{ scopus: "Scopus", crest: "CREST", sanlic: "SANLiC", kanalregister: "Kanalregister", journal_site: "journal site" }[k] || k} ${v} s`).join(" · ")),
+      "Time taken: " + Object.entries(report.timings).map(([k, v]) => `${{ scopus: "Scopus", crest: "CREST", sanlic: "SANLiC", kanalregister: "Kanalregister", journal_site: "journal site", apc: "APC" }[k] || k} ${v} s`).join(" · ")),
     h("div", { class: "cards" },
-      s.scopus ? scopusCard(s.scopus) : s.scimago ? scimagoCard(s.scimago) : null, crestCard(s.crest), kanalCard(s.kanalregister), sanlicCard(s.sanlic), siteCard(s.journal_site), templatesCard(report)));
+      s.scopus ? scopusCard(s.scopus) : s.scimago ? scimagoCard(s.scimago) : null, crestCard(s.crest), kanalCard(s.kanalregister), sanlicCard(s.sanlic), siteCard(s.journal_site), apcCard(report), templatesCard(report)));
 }
 
 export function renderCandidates(query, candidates, onPick) {
@@ -435,7 +499,7 @@ function sanlicSource(r, meta) {
     agreement_page: page ? `https://sanlic.ac.za/${page}/` : null, title_list: meta && meta.source_url } };
 }
 
-export function quickReport(query, { scopus, scopusNote, scopusError, crest, sanlic, lists, issns, title }) {
+export function quickReport(query, { scopus, scopusNote, scopusError, crest, sanlic, lists, issns, title, apc }) {
   const meta = Object.fromEntries((lists || []).map((l) => [l.key, l]));
   const sj = scopusSource(scopus, scopusNote, scopusError);
   const kanalTerm = (issns || [])[0] || title || query;
@@ -446,6 +510,8 @@ export function quickReport(query, { scopus, scopusNote, scopusError, crest, san
     kanalregister: { status: "skipped", data: {},
       url: `https://kanalregister.hkdir.no/en/sok?option=journals&input=${encodeURIComponent(kanalTerm)}`,
       note: "Kanalregister builds its pages in a browser, so it is checked by your PC. Open it here, or get the full report from your PC." },
+    apc: apc && Object.keys(apc).length ? { status: "found", data: apc } : { status: apc ? "not_found" : "skipped", data: {},
+      note: apc ? "Neither OpenAlex nor DOAJ lists an APC for this journal." : null },
     journal_site: { status: "skipped", data: {},
       note: "Decision times, acceptance rate and APC come from the publisher's site, which your PC reads. Get the full report from your PC." },
   };
@@ -470,8 +536,82 @@ export function quickReport(query, { scopus, scopusNote, scopusError, crest, san
   const n = sources.sanlic;
   glance.push(n.status === "found" ? { label: "SANLiC APC agreement", value: (n.data.included ? "Covered" : "Not covered") + (n.data.oa_type ? ` (${n.data.oa_type})` : ""), tone: n.data.included ? "good" : "warn", source: "sanlic" }
     : { label: "SANLiC APC agreement", value: "Not covered", tone: "warn", source: "sanlic" });
+  const t = apcTile({ sources });
+  if (t) glance.push(t);
   return {
     query, quick: true, candidates: [], glance, sources,
     identity: { title: title || query, issns: issns || [], publisher: sj.data.publisher || (c.data && c.data.publisher), country: sj.data.country },
   };
+}
+
+
+// ------------------------------------------------------- saved journals
+export function journalKey(report) {
+  const id = report.identity || {};
+  const issns = (id.issns || []).map(normaliseIssn).filter(Boolean).sort();
+  return issns.length ? issns[0] : "t:" + normaliseTitle(id.title || report.query || "");
+}
+
+/** The saved entry (from `saved`, a list of {uid, issns, title}) that matches this report, if any. */
+export function findSaved(saved, report) {
+  const id = report.identity || {};
+  const want = new Set((id.issns || []).map(normaliseIssn).filter(Boolean));
+  const t = normaliseTitle(id.title || report.query || "");
+  return (saved || []).find((x) => (x.issns || []).some((i) => want.has(i)) || (!want.size && t && normaliseTitle(x.title) === t)) || null;
+}
+
+/** One table row of headline values from a report. */
+export function summarise(report) {
+  const s = report.sources || {};
+  const found = (k) => (s[k] && s[k].status === "found" ? s[k].data : null);
+  const sc = found("scopus");
+  const sm = found("scimago");
+  const cr = s.crest || {};
+  const kn = found("kanalregister");
+  const sn = s.sanlic || {};
+  const m = ((s.journal_site || {}).data || {}).metrics || {};
+  const apc = apcTile(report);
+  const eligible = cr.status === "found" && cr.data.eligible;
+  return {
+    citescore: sc && sc.citescore && sc.citescore.value != null ? `${sc.citescore.value}${sc.best_quartile ? ` ${sc.best_quartile}` : ""}`
+      : sm && sm.sjr ? `SJR ${sm.sjr.value ?? ""} ${sm.sjr.best_quartile || ""}`.trim() : "",
+    quartile: (sc && sc.best_quartile) || (sm && sm.sjr && sm.sjr.best_quartile) || null,
+    dhet: cr.status === "found" ? [eligible ? "Eligible" : cr.data.status, eligible ? "good" : "bad"]
+      : cr.status === "not_found" ? ["Not on list", "bad"] : ["", "neutral"],
+    sanlic: sn.status === "found" ? [sn.data.included ? "Covered" : "Not covered", sn.data.included ? "good" : "warn"]
+      : sn.status === "not_found" ? ["Not covered", "warn"] : ["", "neutral"],
+    level: kn ? (kn.ceased ? `${kn.level || "?"} (ceased)` : kn.level ? `Level ${kn.level}` : "Listed") : (s.kanalregister || {}).status === "not_found" ? "Not listed" : "",
+    apc: apc ? apc.value.replace(" · SANLiC covered", "") : "",
+    first_decision: m.first_decision ? m.first_decision.value : "",
+    acceptance_rate: m.acceptance_rate ? m.acceptance_rate.value : "",
+    quick: !!report.quick,
+  };
+}
+
+export function renderSaved(saved, onOpen, onRemove) {
+  if (!saved.length) {
+    return h("div", { class: "saved" }, h("h2", {}, "Saved journals"),
+      h("p", { class: "note" }, "None yet. Open a journal's report and tap ☆ Save journal to keep it here. Saved journals stay when history is cleared and sync between the PC and phone."));
+  }
+  const dateFmt = (t) => new Date(t * 1000).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
+  const cell = (v, label) => h("td", { "data-label": label || null }, v || h("span", { class: "ctx" }, "–"));
+  const chip = ([text, tone]) => (text ? tag(text, tone) : null);
+  return h("div", { class: "saved" },
+    h("h2", {}, `Saved journals (${saved.length})`),
+    h("div", { class: "scroll" }, h("table", { class: "saved-table" },
+      h("thead", {}, h("tr", {}, ["Journal", "CiteScore", "DHET", "SANLiC", "Norway", "APC", "1st decision", "Acceptance", "Checked", ""]
+        .map((t) => h("th", {}, t)))),
+      h("tbody", {}, saved.map((item) => {
+        const r = summarise(item.report || {});
+        return h("tr", { class: "saved-row", onclick: () => onOpen(item), tabindex: "0",
+          onkeydown: (e) => { if (e.key === "Enter") onOpen(item); } },
+          h("td", { class: "j" }, h("b", {}, item.title), h("small", {}, (item.issns || [])[0] || "")),
+          cell(r.citescore && h("span", {}, r.citescore.replace(/ Q\d$/, ""), r.quartile ? tag(r.quartile, quartileTone(r.quartile)) : null), "CiteScore"),
+          cell(chip(r.dhet), "DHET"), cell(chip(r.sanlic), "SANLiC"), cell(r.level, "Norway"), cell(r.apc, "APC"),
+          cell(r.first_decision, "1st decision"), cell(r.acceptance_rate, "Acceptance"),
+          cell(dateFmt((item.report && item.report.created_at) || item.updated_at) + (r.quick ? " (quick)" : ""), "Checked"),
+          h("td", { class: "x" }, h("button", { type: "button", class: "unsave", title: "Remove from saved", "aria-label": "Remove from saved",
+            onclick: (e) => { e.stopPropagation(); onRemove(item); } }, "✕")));
+      })))),
+    h("p", { class: "note" }, "Click a journal for its full report. Starred journals keep their newest full report automatically."));
 }
