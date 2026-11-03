@@ -183,3 +183,30 @@ def test_more_publisher_wordings():
 def test_candidates_follow_springer_link_for_bmc():
     assert journal_site.candidate_urls("https://link.springer.com/journal/12911/aims-and-scope") == \
         ["https://link.springer.com/journal/12911"]
+
+
+def test_guideline_limits():
+    from app.sources import guidelines
+    got = guidelines.extract_limits(read("guide_for_authors.html"), "https://example.org/guide")
+    by = {(g["kind"], g["value"]) for g in got}
+    assert ("words", "8,000 words") in by
+    assert ("words", "3000 words") in by
+    assert ("words", "6000–10000 words") in by
+    assert ("abstract", "250 words") in by
+    assert ("pages", "25 pages") in by
+    assert any(g["kind"] == "items" and "50 references" in g["value"] for g in got)
+    abstract = next(g for g in got if g["kind"] == "abstract")
+    assert abstract["section"] == "Abstract" and abstract["url"] == "https://example.org/guide"
+    texts = " ".join(g["text"] for g in got)
+    assert "12-point" not in texts and "1500 articles" not in texts and "menu" not in texts
+
+
+def test_guideline_urls():
+    from app.sources import guidelines
+    assert guidelines.guidelines_url("https://www.sciencedirect.com/journal/journal-of-biomedical-informatics") == \
+        "https://www.sciencedirect.com/journal/journal-of-biomedical-informatics/publish/guide-for-authors"
+    assert guidelines.guidelines_url("https://www.mdpi.com/journal/sensors") == "https://www.mdpi.com/journal/sensors/instructions"
+    assert guidelines.guidelines_url("https://example.org/j") is None
+    html = '<a href="/about">About</a><a href="/authors/guide">Guide for Authors</a><a href="/for-authors">For authors</a>'
+    assert guidelines.guideline_links(html, "https://example.org/j") == \
+        ["https://example.org/authors/guide", "https://example.org/for-authors"]

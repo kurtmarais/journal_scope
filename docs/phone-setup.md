@@ -6,7 +6,7 @@ The phone app checks journals **on its own**, even with the PC off:
 - **CREST's DHET-approved master list:** subsidy status and reason (a list the PC loads into Supabase about weekly)
 - **SANLiC's R&P title list:** APC agreement coverage (likewise)
 
-Two things still need the PC, because they need a browser engine: the **Kanalregister level** and the **journal website statistics** (decision times, acceptance rate, APC). The phone report links to Kanalregister so you can open it yourself, and **Get full report from my PC** queues the complete check for when the PC is on.
+Three things still need the PC, because they need a browser engine: the **Kanalregister level**, the **journal website statistics** (decision times, acceptance rate, APC) and the **word and page limits** from the author guidelines. The phone report links to Kanalregister so you can open it yourself, and **Get full report from my PC** queues the complete check for when the PC is on.
 
 ```
  PC (Journal Scope)  <── sync ──>  Supabase (your project)  <── sync ──>  Phone app

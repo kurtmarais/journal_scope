@@ -212,6 +212,29 @@ function siteCard(r) {
   return card("Journal website", "Days to decision, acceptance rate and APC as stated by the journal.", r, body, { site: "journal site", wide: true });
 }
 
+// ------------------------------------------------------- length limits
+function limitsCard(report) {
+  const r = (report.sources || {}).guidelines;
+  if (!r) return null;                         // reports made before this was added
+  const d = r.data || {};
+  const limits = d.limits || [];
+  const body = [];
+  if (limits.length) {
+    body.push(h("table", { class: "metrics limits" },
+      h("thead", {}, h("tr", {}, h("th", {}, "Limit"), h("th", {}, "Value"), h("th", {}, "As written"))),
+      h("tbody", {}, limits.map((l) => h("tr", {},
+        h("td", {}, l.label, l.section ? h("div", { class: "ctx" }, l.section) : null),
+        h("td", {}, h("strong", {}, l.value)),
+        h("td", { class: "ctx" }, `“${l.text}”`))))));
+    body.push(h("p", { class: "note" }, "Limits often differ by article type; check the row's wording and the section it sits under."));
+  }
+  const guide = d.guidelines_url || (templateLinks(report).find((l) => /guidelines/i.test(l.label)) || {}).url;
+  if (guide && !r.url) body.push(h("p", { class: "src" }, link(guide, "Open the author guidelines")));
+  const chip = r.status === "found" ? [`${limits.length} stated`, "neutral"] : r.status === "not_found" ? ["None stated", "neutral"] : undefined;
+  return card("Word and page limits", "Length limits for submissions, as stated in the journal's author guidelines.", r, body,
+    { site: "author guidelines", wide: true, chip });
+}
+
 // ------------------------------------------------------------------ APC
 const priceText = (p) => (p && typeof p.price === "number" ? `${p.currency || ""} ${p.price.toLocaleString("en-US")}`.trim() : "");
 
@@ -371,9 +394,9 @@ export function renderReport(report, opts = {}) {
       h("div", { class: "meta" }, meta), opts.extra || null),
     glanceTiles(report.glance),
     report.timings && Object.keys(report.timings).length > 0 && h("p", { class: "timings" },
-      "Time taken: " + Object.entries(report.timings).map(([k, v]) => `${{ scopus: "Scopus", crest: "CREST", sanlic: "SANLiC", kanalregister: "Kanalregister", journal_site: "journal site", apc: "APC" }[k] || k} ${v} s`).join(" · ")),
+      "Time taken: " + Object.entries(report.timings).map(([k, v]) => `${{ scopus: "Scopus", crest: "CREST", sanlic: "SANLiC", kanalregister: "Kanalregister", journal_site: "journal site", apc: "APC", guidelines: "author guidelines" }[k] || k} ${v} s`).join(" · ")),
     h("div", { class: "cards" },
-      s.scopus ? scopusCard(s.scopus) : s.scimago ? scimagoCard(s.scimago) : null, crestCard(s.crest), kanalCard(s.kanalregister), sanlicCard(s.sanlic), siteCard(s.journal_site), apcCard(report), templatesCard(report)));
+      s.scopus ? scopusCard(s.scopus) : s.scimago ? scimagoCard(s.scimago) : null, crestCard(s.crest), kanalCard(s.kanalregister), sanlicCard(s.sanlic), siteCard(s.journal_site), limitsCard(report), apcCard(report), templatesCard(report)));
 }
 
 export function renderCandidates(query, candidates, onPick) {
@@ -514,6 +537,8 @@ export function quickReport(query, { scopus, scopusNote, scopusError, crest, san
       note: apc ? "Neither OpenAlex nor DOAJ lists an APC for this journal." : null },
     journal_site: { status: "skipped", data: {},
       note: "Decision times, acceptance rate and APC come from the publisher's site, which your PC reads. Get the full report from your PC." },
+    guidelines: { status: "skipped", data: {},
+      note: "Word and page limits are read from the journal's author guidelines by your PC. Get the full report from your PC, or open the guidelines from the Templates card." },
   };
   const glance = [];
   if (sj.status === "found") {

@@ -8,7 +8,7 @@ from datetime import date
 import time
 
 from .fetch import Fetcher
-from .sources import ERROR, FOUND, apc, crest, journal_site, kanalregister, sanlic, scopus, source_result
+from .sources import ERROR, FOUND, apc, crest, guidelines, journal_site, kanalregister, sanlic, scopus, source_result
 from .util import looks_like_issn, normalise_issn
 
 
@@ -113,9 +113,10 @@ def apc_tile(report: dict) -> dict | None:
 
 
 # Longest wait per source before it is reported as not answering (seconds).
-LIMITS = {"scopus": 30, "crest": 30, "sanlic": 90, "apc": 25, "kanalregister": 60, "journal_site": 75}
+LIMITS = {"scopus": 30, "crest": 30, "sanlic": 90, "apc": 25, "kanalregister": 60, "journal_site": 75, "guidelines": 60}
 NAMES = {"scopus": scopus.NAME, "crest": crest.NAME, "sanlic": sanlic.NAME, "apc": apc.NAME,
-         "kanalregister": kanalregister.NAME, "journal_site": journal_site.NAME}
+         "kanalregister": kanalregister.NAME, "journal_site": journal_site.NAME,
+         "guidelines": guidelines.NAME}
 
 
 async def _timed(key: str, coro, timings: dict, progress):
@@ -178,7 +179,7 @@ async def build_report(
     if candidates:  # ambiguous title: let the user choose before querying the rest
         if early_kanal:
             early_kanal.cancel()
-        for key in ("crest", "kanalregister", "sanlic", "journal_site", "apc"):
+        for key in ("crest", "kanalregister", "sanlic", "journal_site", "apc", "guidelines"):
             report["sources"][key] = {"source": key, "status": "skipped", "data": {}, "note": "Choose a journal first."}
         report["identity"] = {"title": None, "issns": [], "publisher": None}
         report["glance"] = []
@@ -186,12 +187,19 @@ async def build_report(
 
     homepage = site_url or sjd.get("homepage")
 
+    async def homepage_after_kanal(kanal_task):
+        if homepage:
+            return homepage
+        k = await kanal_task
+        return k["data"].get("homepage") if k["status"] == FOUND else None
+
     async def site_after_kanal(kanal_task):
-        url = homepage
-        if not url:
-            k = await kanal_task
-            url = k["data"].get("homepage") if k["status"] == FOUND else None
+        url = await homepage_after_kanal(kanal_task)
         return await _timed("journal_site", journal_site.lookup(fetcher, url), timings, progress)
+
+    async def guidelines_after_kanal(kanal_task):
+        url = await homepage_after_kanal(kanal_task)
+        return await _timed("guidelines", guidelines.lookup(fetcher, url), timings, progress)
 
     kanal_task = early_kanal or asyncio.ensure_future(
         _timed("kanalregister", kanalregister.lookup(fetcher, title, issns), timings, progress))
@@ -206,11 +214,12 @@ async def build_report(
             ids = k["data"].get("issns", []) if k["status"] == FOUND else []
         return await _timed("apc", apc.lookup(fetcher, ids, openalex_key), timings, progress)
 
-    crest_r, sanlic_r, site_r, apc_r = await asyncio.gather(
+    crest_r, sanlic_r, site_r, apc_r, guide_r = await asyncio.gather(
         _timed("crest", crest.lookup(fetcher, title, issns), timings, progress),
         _timed("sanlic", sanlic.lookup(fetcher, title, issns), timings, progress),
         site_after_kanal(kanal_task),
         apc_when_ready(),
+        guidelines_after_kanal(kanal_task),
     )
     kanal_r = await kanal_task
 
@@ -223,7 +232,8 @@ async def build_report(
             issns.append(i)
 
     report["sources"].update(
-        {"crest": crest_r, "kanalregister": kanal_r, "sanlic": sanlic_r, "journal_site": site_r, "apc": apc_r}
+        {"crest": crest_r, "kanalregister": kanal_r, "sanlic": sanlic_r, "journal_site": site_r, "apc": apc_r,
+         "guidelines": guide_r}
     )
     report["identity"] = {
         "title": title,

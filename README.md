@@ -8,9 +8,12 @@ Checks a journal's validity and credibility for publication by pulling, in one r
 | [CREST ZA Publications Monitor](https://db.crest.sun.ac.za/zapublications/) | DHET subsidy status (eligible / discontinued / delisted / ...) and the stated reason |
 | [Kanalregister](https://kanalregister.hkdir.no/en) | Norwegian Register level (2, 1, 0, X), level history, ceased flag, DOAJ indexing |
 | Journal website | Days to first decision / decision after review / acceptance / publication, acceptance rate, APC, impact factor as reported by the journal |
+| Journal's author guidelines | Word, page and character limits, abstract length, and caps on figures, tables and references, each quoted as written |
 | [SANLiC](https://sanlic.ac.za/read-and-publish-agreements/) | Whether a SANLiC read-and-publish agreement covers the journal, OA model, explanation, agreement period |
 
 **Saved journals:** the ☆ on a report stars the journal. **★ Saved journals** (above History) opens a table of them: CiteScore and quartile, DHET, SANLiC, Norwegian level, APC, first-decision time and acceptance rate. Click one for its full report, with **Check again** to refresh it. Saved journals are kept apart from history (clearing history doesn't remove them), keep their newest full report automatically, and sync with the phone.
+
+**Word and page limits:** the desktop app reads the journal's author guidelines (known pages for Elsevier, Springer, MDPI, Taylor & Francis, Frontiers, SAGE and Wiley; otherwise the homepage's "Guide for authors" link) and lists each sentence that states a limit, with the section it sits under. Limits usually differ by article type, so the wording is shown rather than one number. On the phone this needs the full report from the PC.
 
 **APC:** each report shows the APC as stated by the journal's website, by DOAJ (open-access journals) and as OpenAlex's list price, plus whether SANLiC covers it. List prices can differ from what you are charged.
 
