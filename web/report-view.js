@@ -434,7 +434,7 @@ function templatesCard(report) {
     h("ul", { class: "tlinks" }, links.map((l) => h("li", {}, link(l.url, l.label), l.note && h("span", { class: "ctx" }, ` (${l.note})`)))));
 }
 
-// The two quartile rankings (SJR, then CiteScore) sit side by side in their own row; "Indexed in Scopus" goes last.
+// The two quartile rankings (SJR, then CiteScore) lead, side by side; "Indexed in Scopus" goes last.
 const isQuartileTile = (g) => g.source === "sjr" || /^CiteScore/.test(g.label);
 
 export function orderGlance(glance) {
@@ -450,9 +450,7 @@ export function glanceTiles(glance) {
     h("div", { class: "l" }, g.label), h("div", { class: "v" }, g.value),
     h("div", { class: "s" }, { sjr: "SCImago", journal_site: "journal site" }[g.source] || g.source.replace("_", " ")));
   const { quart, rest } = orderGlance(glance);
-  return h("div", { class: "glance-wrap" },
-    quart.length ? h("div", { class: "glance quartiles" }, quart.map(tile)) : null,
-    rest.length ? h("div", { class: "glance" }, rest.map(tile)) : null);
+  return h("div", { class: "glance" }, [...quart, ...rest].map(tile));
 }
 
 // opts: { saved: bool, onStar: () => void, extra: Node } — the star button appears when onStar is given.

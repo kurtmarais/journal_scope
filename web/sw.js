@@ -1,6 +1,6 @@
 // Keeps the app itself available offline. Reports are not cached here (they live
 // in the app's own storage); requests to Supabase always go to the network.
-const CACHE = "journal-scope-shell-v11";
+const CACHE = "journal-scope-shell-v12";
 const SHELL = ["./", "index.html", "styles.css", "report.css", "app.js", "report-view.js", "discover.js", "supabase.js",
   "config.js", "manifest.webmanifest", "icons/icon-192.png", "icons/icon-512.png"];
 

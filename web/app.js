@@ -6,7 +6,7 @@ import { apcFromSources, findSaved, h, journalKey, missingSections, normaliseIss
 import { AuthError, Supabase, SyncError } from "./supabase.js";
 import { discover, recordToReport, renderDiscover } from "./discover.js";
 
-const APP_VERSION = "2026.11.12";   // shown at the bottom of the home screen; bump with each phone change
+const APP_VERSION = "2026.11.13";   // shown at the bottom of the home screen; bump with each phone change
 const root = document.getElementById("root");
 const LS = {
   get: (k, d = null) => { try { const v = localStorage.getItem("js." + k); return v === null ? d : JSON.parse(v); } catch { return d; } },
