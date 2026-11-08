@@ -127,12 +127,13 @@ class Desktop:
         self.log = data_dir / "launch.log"
         self.renderer = QtRenderer(data_dir, app)
         self.server = Server(self.db, self._status, self._on_local_change, renderer=self.renderer.submit,
+                             download=self.renderer.download,
                              scopus_credentials=self._scopus_credentials,
                              openalex_key=lambda: unprotect_token(self.settings.get("openalex_key", "")) or None,
                              lists_dir=data_dir / "lists")
         self.server.start()                     # loads in the background
         self.engine = SyncEngine(self.db, self.settings, self._save_settings, self.server.lookup,
-                                 get_bytes=_http_bytes, tmp_dir=data_dir / "lists")
+                                 get_bytes=_http_bytes, tmp_dir=data_dir / "lists", sjr_rows=self.server.sjr_rows)
         self.sync = SyncController(self.engine)
 
         self.win = MainWindow(self.server.url, self.icon)
@@ -192,7 +193,7 @@ class Desktop:
         self.engine.force_lists = True
         self.sync.kick()
         QMessageBox.information(self.win, "Journal Scope",
-                                "Reloading the CREST and SANLiC lists for the phone. This takes a minute or two; "
+                                "Reloading the CREST, SANLiC and SCImago (SJR) lists for the phone. This takes a minute or two; "
                                 "the status at the bottom left shows when it is done.")
 
     # ------------------------------------------------------- menu and tray

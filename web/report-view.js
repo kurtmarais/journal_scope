@@ -93,6 +93,58 @@ function scimagoCard(r) {
   return card("SCImago", "Existence and indexing, SJR / quartile, H-index, citations per document, related journals.", r, body, { site: "SCImago", wide: true });
 }
 
+// ------------------------------------------------------------- SCImago SJR
+const SCIMAGO_HOME = "https://www.scimagojr.com/journalrank.php";
+
+/** The report's SJR source from a SCImago list row (phone: ref_sjr; desktop: the downloaded list). */
+export function sjrSource(row, listMeta) {
+  if (!listMeta) return { status: "skipped", data: {}, url: SCIMAGO_HOME,
+    note: "SCImago's list hasn't been loaded for the phone yet. On the PC: Settings → Refresh phone lists now." };
+  if (!row) return { status: "not_found", data: { year: (listMeta.version || "").replace(/^SJR\s*/, "") || null }, url: SCIMAGO_HOME,
+    note: "Not in SCImago's ranking (it covers journals indexed in Scopus)." };
+  let categories = row.categories || [];
+  if (typeof categories === "string") { try { categories = JSON.parse(categories); } catch { categories = []; } }
+  return { status: "found", url: `https://www.scimagojr.com/journalsearch.php?q=${encodeURIComponent(row.key)}&tip=sid`,
+    data: { title: row.title, issns: row.issns || [], sjr: row.sjr, quartile: row.quartile, categories, h_index: row.h_index,
+      type: row.type, publisher: row.publisher, country: row.country, coverage: row.coverage, year: row.year, sourceid: row.key } };
+}
+
+export function sjrTile(src) {
+  if (!src) return null;
+  const d = src.data || {};
+  if (src.status === "found" && (d.quartile || d.sjr != null)) {
+    return { label: d.year ? `SJR quartile ${d.year}` : "SJR quartile",
+      value: (d.quartile || "No quartile") + (d.sjr != null ? ` (SJR ${Number(d.sjr).toFixed(3)})` : ""),
+      tone: { Q1: "good", Q2: "good", Q3: "warn", Q4: "bad" }[d.quartile] || "neutral", source: "sjr" };
+  }
+  if (src.status === "not_found") return { label: "SJR quartile", value: "Not ranked by SCImago", tone: "warn", source: "sjr" };
+  return null;
+}
+
+function sjrCard(r) {
+  if (!r) return null;                         // reports made before SJR was added
+  const d = r.data || {};
+  const body = [];
+  if (r.status === "found") {
+    body.push(kv([
+      ["SJR quartile", d.quartile ? [tag(d.quartile, quartileTone(d.quartile)), h("span", { class: "ctx" }, " best across its subject categories")] : "No quartile given"],
+      ["SJR", d.sjr != null ? `${Number(d.sjr).toFixed(3)}${d.year ? ` (${d.year})` : ""}` : ""],
+      ["H-index", d.h_index != null ? String(d.h_index) : ""],
+      ["Coverage", d.coverage],
+      ["Publisher", d.publisher],
+      ["Country", d.country],
+    ]));
+    if ((d.categories || []).length) {
+      body.push(h("table", {},
+        h("thead", {}, h("tr", {}, h("th", {}, "Subject category"), h("th", {}, "SJR quartile"))),
+        h("tbody", {}, d.categories.map((c) => h("tr", {}, h("td", {}, c.name), h("td", {}, c.quartile ? tag(c.quartile, quartileTone(c.quartile)) : "–"))))));
+    }
+  }
+  const chip = r.status === "found" && d.quartile ? [`SJR ${d.quartile}`, quartileTone(d.quartile)] : undefined;
+  return card("SCImago (SJR)", "The SJR quartile (Q1–Q4) in each subject category, as SCImago ranks it. This is the quartile most rankings and tools use.",
+    r, body, { site: "SCImago", wide: true, chip });
+}
+
 function scopusCard(r) {
   const d = r.data || {};
   const body = [];
@@ -100,7 +152,7 @@ function scopusCard(r) {
     const cs = d.citescore;
     const pct = d.best_percentile != null ? `, best: ${Math.round(d.best_percentile)}th percentile` : "";
     body.push(kv([
-      ["CiteScore", cs && cs.value != null ? [String(cs.value), " ", d.best_quartile && tag(d.best_quartile, quartileTone(d.best_quartile)),
+      ["CiteScore", cs && cs.value != null ? [String(cs.value), " ", d.best_quartile && tag(`CiteScore ${d.best_quartile}`, quartileTone(d.best_quartile)),
         h("span", { class: "ctx" }, ` (${cs.year || ""}${pct})`)] : ""],
       ["CiteScore Tracker", d.citescore_tracker && d.citescore_tracker.value != null ? `${d.citescore_tracker.value} (${d.citescore_tracker.year}, in progress)` : ""],
       ["SJR", d.sjr ? `${d.sjr.value} (${d.sjr.year})` : ""],
@@ -112,14 +164,14 @@ function scopusCard(r) {
     ]));
     if ((d.subject_ranks || []).length) {
       body.push(h("table", {},
-        h("thead", {}, h("tr", {}, h("th", {}, "Subject"), h("th", {}, "Rank"), h("th", {}, "Percentile"), h("th", {}, "Quartile"))),
+        h("thead", {}, h("tr", {}, h("th", {}, "Subject"), h("th", {}, "Rank"), h("th", {}, "Percentile"), h("th", {}, "CiteScore quartile"))),
         h("tbody", {}, d.subject_ranks.map((x) => h("tr", {}, h("td", {}, x.subject), h("td", {}, String(x.rank ?? "")),
           h("td", {}, x.percentile != null ? `${Math.round(x.percentile)}th` : ""), h("td", {}, x.quartile ? tag(x.quartile, quartileTone(x.quartile)) : ""))))));
     } else if (d.ranks_unavailable) {
       body.push(h("p", { class: "note" }, "Subject ranks and quartiles were not available for this lookup."));
     }
   }
-  return card("Scopus", "Existence and indexing, CiteScore and its quartile in each subject (Q1 = 75th percentile and above), SJR.", r, body, { site: "Scopus", wide: true });
+  return card("Scopus (CiteScore)", "Existence and indexing, CiteScore and its CiteScore quartile in each subject (Q1 = 75th percentile and above). CiteScore quartiles can differ from SJR quartiles.", r, body, { site: "Scopus", wide: true });
 }
 
 function crestCard(r) {
@@ -216,7 +268,7 @@ function siteCard(r) {
 // Sections of a full report, with the name used when telling the user what an older report lacks.
 // Keep in step with REPORT_SECTIONS in app/util.py.
 export const REPORT_SECTIONS = { scopus: "Scopus", crest: "CREST", kanalregister: "Kanalregister", sanlic: "SANLiC",
-  journal_site: "journal statistics", apc: "APC", guidelines: "word and page limits" };
+  journal_site: "journal statistics", apc: "APC", guidelines: "word and page limits", sjr: "SJR quartile" };
 
 export function missingSections(report) {
   const s = (report && report.sources) || {};
@@ -385,7 +437,7 @@ function templatesCard(report) {
 export function glanceTiles(glance) {
   return h("div", { class: "glance" }, (glance || []).map((g) =>
     h("div", { class: `tile ${g.tone}` },
-      h("div", { class: "l" }, g.label), h("div", { class: "v" }, g.value), h("div", { class: "s" }, g.source.replace("_", " ")))));
+      h("div", { class: "l" }, g.label), h("div", { class: "v" }, g.value), h("div", { class: "s" }, { sjr: "SCImago", journal_site: "journal site" }[g.source] || g.source.replace("_", " ")))));
 }
 
 // opts: { saved: bool, onStar: () => void, extra: Node } — the star button appears when onStar is given.
@@ -406,9 +458,9 @@ export function renderReport(report, opts = {}) {
       h("div", { class: "meta" }, meta), opts.extra || null),
     glanceTiles(report.glance),
     report.timings && Object.keys(report.timings).length > 0 && h("p", { class: "timings" },
-      "Time taken: " + Object.entries(report.timings).map(([k, v]) => `${{ scopus: "Scopus", crest: "CREST", sanlic: "SANLiC", kanalregister: "Kanalregister", journal_site: "journal site", apc: "APC", guidelines: "author guidelines" }[k] || k} ${v} s`).join(" · ")),
+      "Time taken: " + Object.entries(report.timings).map(([k, v]) => `${{ scopus: "Scopus", crest: "CREST", sanlic: "SANLiC", kanalregister: "Kanalregister", journal_site: "journal site", apc: "APC", guidelines: "author guidelines", sjr: "SCImago" }[k] || k} ${v} s`).join(" · ")),
     h("div", { class: "cards" },
-      s.scopus ? scopusCard(s.scopus) : s.scimago ? scimagoCard(s.scimago) : null, crestCard(s.crest), kanalCard(s.kanalregister), sanlicCard(s.sanlic), siteCard(s.journal_site), limitsCard(report), apcCard(report), templatesCard(report)));
+      sjrCard(s.sjr), s.scopus ? scopusCard(s.scopus) : s.scimago ? scimagoCard(s.scimago) : null, crestCard(s.crest), kanalCard(s.kanalregister), sanlicCard(s.sanlic), siteCard(s.journal_site), limitsCard(report), apcCard(report), templatesCard(report)));
 }
 
 export function renderCandidates(query, candidates, onPick) {
@@ -534,7 +586,7 @@ function sanlicSource(r, meta) {
     agreement_page: page ? `https://sanlic.ac.za/${page}/` : null, title_list: meta && meta.source_url } };
 }
 
-export function quickReport(query, { scopus, scopusNote, scopusError, crest, sanlic, lists, issns, title, apc }) {
+export function quickReport(query, { scopus, scopusNote, scopusError, crest, sanlic, lists, issns, title, apc, sjr }) {
   const meta = Object.fromEntries((lists || []).map((l) => [l.key, l]));
   const sj = scopusSource(scopus, scopusNote, scopusError);
   const kanalTerm = (issns || [])[0] || title || query;
@@ -551,8 +603,11 @@ export function quickReport(query, { scopus, scopusNote, scopusError, crest, san
       note: "Decision times, acceptance rate and APC come from the publisher's site, which your PC reads. Get the full report from your PC." },
     guidelines: { status: "skipped", data: {},
       note: "Word and page limits are read from the journal's author guidelines by your PC. Get the full report from your PC, or open the guidelines from the Templates card." },
+    sjr: sjrSource(sjr, meta.sjr),
   };
   const glance = [];
+  const st = sjrTile(sources.sjr);
+  if (st) glance.push(st);
   if (sj.status === "found") {
     const d = sj.data;
     const last = d.coverage_last_year || (d.citescore && d.citescore.year);
@@ -560,10 +615,10 @@ export function quickReport(query, { scopus, scopusNote, scopusError, crest, san
       tone: last >= new Date().getFullYear() - 2 ? "good" : "warn", source: "scopus" });
     if (d.citescore && d.citescore.value != null) {
       const extra = d.best_quartile && d.best_percentile != null ? ` (${d.best_quartile}, ${Math.round(d.best_percentile)}th percentile)` : "";
-      glance.push({ label: d.citescore.year ? `CiteScore ${d.citescore.year}` : "CiteScore", value: `${d.citescore.value.toFixed(1)}${extra}`,
+      glance.push({ label: d.citescore.year ? `CiteScore ${d.citescore.year} (not SJR)` : "CiteScore (not SJR)", value: `${d.citescore.value.toFixed(1)}${extra}`,
         tone: { Q1: "good", Q2: "good", Q3: "warn", Q4: "bad" }[d.best_quartile] || "neutral", source: "scopus" });
     }
-    if (d.sjr) glance.push({ label: `SJR ${d.sjr.year}`, value: d.sjr.value.toFixed(3), tone: "neutral", source: "scopus" });
+    if (d.sjr && !st) glance.push({ label: `SJR ${d.sjr.year}`, value: d.sjr.value.toFixed(3), tone: "neutral", source: "scopus" });
   } else if (sj.status === "not_found") {
     glance.push({ label: "Indexed in Scopus", value: "Not found", tone: "bad", source: "scopus" });
   }
@@ -603,6 +658,7 @@ export function summarise(report) {
   const found = (k) => (s[k] && s[k].status === "found" ? s[k].data : null);
   const sc = found("scopus");
   const sm = found("scimago");
+  const sj = found("sjr");
   const cr = s.crest || {};
   const kn = found("kanalregister");
   const sn = s.sanlic || {};
@@ -610,9 +666,11 @@ export function summarise(report) {
   const apc = apcTile(report);
   const eligible = cr.status === "found" && cr.data.eligible;
   return {
+    sjr: sj ? (sj.sjr != null ? Number(sj.sjr).toFixed(3) : "") : sm && sm.sjr ? String(sm.sjr.value ?? "") : "",
+    sjr_quartile: (sj && sj.quartile) || (sm && sm.sjr && sm.sjr.best_quartile) || null,
     citescore: sc && sc.citescore && sc.citescore.value != null ? `${sc.citescore.value}${sc.best_quartile ? ` ${sc.best_quartile}` : ""}`
-      : sm && sm.sjr ? `SJR ${sm.sjr.value ?? ""} ${sm.sjr.best_quartile || ""}`.trim() : "",
-    quartile: (sc && sc.best_quartile) || (sm && sm.sjr && sm.sjr.best_quartile) || null,
+      : "",
+    quartile: (sc && sc.best_quartile) || null,
     dhet: cr.status === "found" ? [eligible ? "Eligible" : cr.data.status, eligible ? "good" : "bad"]
       : cr.status === "not_found" ? ["Not on list", "bad"] : ["", "neutral"],
     sanlic: sn.status === "found" ? [sn.data.included ? "Covered" : "Not covered", sn.data.included ? "good" : "warn"]
@@ -636,13 +694,14 @@ export function renderSaved(saved, onOpen, onRemove) {
   return h("div", { class: "saved" },
     h("h2", {}, `Saved journals (${saved.length})`),
     h("div", { class: "scroll" }, h("table", { class: "saved-table" },
-      h("thead", {}, h("tr", {}, ["Journal", "CiteScore", "DHET", "SANLiC", "Norway", "APC", "1st decision", "Acceptance", "Checked", ""]
+      h("thead", {}, h("tr", {}, ["Journal", "SJR", "CiteScore", "DHET", "SANLiC", "Norway", "APC", "1st decision", "Acceptance", "Checked", ""]
         .map((t) => h("th", {}, t)))),
       h("tbody", {}, saved.map((item) => {
         const r = summarise(item.report || {});
         return h("tr", { class: "saved-row", onclick: () => onOpen(item), tabindex: "0",
           onkeydown: (e) => { if (e.key === "Enter") onOpen(item); } },
           h("td", { class: "j" }, h("b", {}, item.title), h("small", {}, (item.issns || [])[0] || "")),
+          cell((r.sjr || r.sjr_quartile) && h("span", {}, r.sjr, r.sjr_quartile ? tag(r.sjr_quartile, quartileTone(r.sjr_quartile)) : null), "SJR"),
           cell(r.citescore && h("span", {}, r.citescore.replace(/ Q\d$/, ""), r.quartile ? tag(r.quartile, quartileTone(r.quartile)) : null), "CiteScore"),
           cell(chip(r.dhet), "DHET"), cell(chip(r.sanlic), "SANLiC"), cell(r.level, "Norway"), cell(r.apc, "APC"),
           cell(r.first_decision, "1st decision"), cell(r.acceptance_rate, "Acceptance"),

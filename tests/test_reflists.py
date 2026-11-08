@@ -29,8 +29,13 @@ def test_crest_link():
 def test_due():
     assert reflists.due({}) is True
     now = time.time()
-    assert reflists.due({"ref_refreshed_at": now - 3600}) is False
+    ok = {"crest": "ok, 10 journals", "sanlic": "ok, 5 journals", "sjr": "ok, 30000 journals"}
+    assert reflists.due({"ref_refreshed_at": now - 3600, "ref_results": ok}) is False
     assert reflists.due({"ref_refreshed_at": now - 8 * 86400, "ref_tried_at": now - 3600}) is False
+    # a list added since the last weekly refresh (SCImago) loads the next day, not a week later
+    old = {"crest": "ok, 10 journals", "sanlic": "ok, 5 journals"}
+    assert reflists.due({"ref_refreshed_at": now - 2 * 86400, "ref_tried_at": now - 2 * 86400, "ref_results": old}) is True
+    assert reflists.due({"ref_refreshed_at": now - 2 * 86400, "ref_tried_at": now - 2 * 86400, "ref_results": ok}) is False
 
 
 def _engine(tmp_path, fake, get_bytes=None):
@@ -69,3 +74,31 @@ def test_one_list_failing_keeps_the_others(tmp_path):
     assert lists["crest"].startswith("failed") and lists["sanlic"].startswith("ok")
     assert "ref_refreshed_at" not in eng.settings      # retried tomorrow
     assert fake.tables["ref_sanlic"]
+
+
+def test_scimago_list_is_loaded_for_the_phone(tmp_path):
+    from tests.reflist_samples import sjr_rows
+    fake = FakeSupabase()
+    eng = SyncEngine(Database(tmp_path / "d.db"), {}, lambda s: None, lambda *a: {}, opener=fake.opener,
+                     get_bytes=get_bytes_for(tmp_path), tmp_dir=tmp_path / "lists", sjr_rows=sjr_rows)
+    eng.sign_in("https://x.supabase.co", "k", EMAIL, PASSWORD)
+    lists = eng.cycle()["lists"]
+    assert lists["sjr"] == "ok, 4 journals"
+    row = fake.tables["ref_sjr"]["23571"]
+    assert row["quartile"] == "Q1" and row["sjr"] == 1.612 and row["issns"] == ["1532-0480", "1532-0464"]
+    assert row["categories"][1] == {"name": "Health Informatics", "quartile": "Q1"} and row["year"] == "2025"
+    assert fake.tables["ref_lists"]["sjr"]["version"] == "SJR 2025"
+
+
+def test_scimago_failing_keeps_the_other_lists(tmp_path):
+    fake = FakeSupabase()
+
+    def blocked():
+        raise RuntimeError("scimagojr.com asked for a human check")
+
+    eng = SyncEngine(Database(tmp_path / "d.db"), {}, lambda s: None, lambda *a: {}, opener=fake.opener,
+                     get_bytes=get_bytes_for(tmp_path), tmp_dir=tmp_path / "lists", sjr_rows=blocked)
+    eng.sign_in("https://x.supabase.co", "k", EMAIL, PASSWORD)
+    lists = eng.cycle()["lists"]
+    assert lists["sjr"].startswith("failed: scimagojr.com asked") and lists["crest"].startswith("ok")
+    assert fake.tables["ref_crest"] and not fake.tables["ref_sjr"]

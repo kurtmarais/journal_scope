@@ -5,6 +5,7 @@ The phone app checks journals **on its own**, even with the PC off:
 - **Scopus:** CiteScore, quartile and percentile per subject, SJR, coverage, through a small Supabase **Edge Function** that holds your Elsevier API key (the phone never sees the key)
 - **CREST's DHET-approved master list:** subsidy status and reason (a list the PC loads into Supabase about weekly)
 - **SANLiC's R&P title list:** APC agreement coverage (likewise)
+- **SCImago's SJR ranking:** the SJR quartile per subject category (likewise; the PC's copy is renewed monthly)
 
 Three things still need the PC, because they need a browser engine: the **Kanalregister level**, the **journal website statistics** (decision times, acceptance rate, APC) and the **word and page limits** from the author guidelines. The phone report links to Kanalregister so you can open it yourself, and **Get full report from my PC** queues the complete check for when the PC is on.
 
@@ -29,8 +30,9 @@ Journal Scope uses its **own Supabase project** (`journal_scope`), separate from
 2. Paste the contents of [`supabase/migrations/20261103090000_journal_scope.sql`](../supabase/migrations/20261103090000_journal_scope.sql) and click **Run**.
 3. New query again: paste [`supabase/migrations/20261104090000_reference_lists.sql`](../supabase/migrations/20261104090000_reference_lists.sql) and click **Run**.
 4. New query again: paste [`supabase/migrations/20261105090000_saved_journals.sql`](../supabase/migrations/20261105090000_saved_journals.sql) and click **Run** (saved/starred journals).
+5. New query again: paste [`supabase/migrations/20261108090000_sjr_list.sql`](../supabase/migrations/20261108090000_sjr_list.sql) and click **Run** (SJR quartiles on the phone).
 
-This creates `journal_reports`, `journal_requests`, `journal_saved` and the list tables (`ref_crest`, `ref_sanlic`, `ref_lists`) with row-level security. A signed-in account can only see or change its own rows, and signed-out requests get nothing. It is safe to run again.
+This creates `journal_reports`, `journal_requests`, `journal_saved` and the list tables (`ref_crest`, `ref_sanlic`, `ref_sjr`, `ref_lists`) with row-level security. A signed-in account can only see or change its own rows, and signed-out requests get nothing. It is safe to run again.
 
 ## 2. Create your account and lock sign-ups (one time)
 
@@ -57,7 +59,7 @@ CiteScore quartiles need institutional access. Elsevier grants it to requests fr
 
 - The password is used once and not stored. The sign-in token is encrypted with Windows data protection for your account.
 - The bottom of the history panel shows **Synced HH:MM**.
-- The first sync loads the two lists (a minute or two). After that they reload about weekly; **Settings → Refresh phone lists now** forces it. The status line says when it is done or which list failed.
+- The first sync loads the three lists (a few minutes; SCImago's has about 30,000 journals). After that they reload about weekly; **Settings → Refresh phone lists now** forces it. The status line says when it is done or which list failed.
 - Tick **Start with Windows** in Settings so full-report requests are handled whenever the PC is on.
 
 ## 5. Put the phone app online with Cloudflare (one time)
@@ -81,7 +83,7 @@ Home-screen apps keep their own storage, separate from Safari, so sign in again 
 
 | Where | What's there |
 |---|---|
-| Supabase | Your reports, pending requests and the CREST and SANLiC lists, readable only by your account; your Elsevier API key as an Edge Function secret. |
+| Supabase | Your reports, pending requests and the CREST, SANLiC and SCImago lists, readable only by your account; your Elsevier API key as an Edge Function secret. |
 | Cloudflare | Only the app's own files. Reports never pass through it; the phone talks to Supabase directly. |
 | Phone | A copy of your reports and the sign-in token, in the app's own storage. **Sign out** removes them. |
 | PC | Report history (`%APPDATA%\JournalScope\journal_scope.db`), settings and logs. |

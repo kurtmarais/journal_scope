@@ -122,14 +122,14 @@ def test_phone_request_report_delete(tmp_path):
 
 
 def test_phone_searches_lists_without_pc(tmp_path):
-    from tests.reflist_samples import get_bytes_for
+    from tests.reflist_samples import get_bytes_for, sjr_rows
 
     fake = FakeSupabase()
     api, api_url = fake.serve()
     web, web_url = serve_web(api_url)
     # The PC loads the lists once (then may be switched off).
     pc = SyncEngine(Database(tmp_path / "pc.db"), {}, lambda s: None, lambda *a: {}, opener=fake.opener,
-                    get_bytes=get_bytes_for(tmp_path), tmp_dir=tmp_path / "lists")
+                    get_bytes=get_bytes_for(tmp_path), tmp_dir=tmp_path / "lists", sjr_rows=sjr_rows)
     pc.sign_in(api_url, "sb_publishable_test", EMAIL, PASSWORD)
     assert all(v.startswith("ok") for v in pc.cycle()["lists"].values())
 
@@ -153,6 +153,10 @@ def test_phone_searches_lists_without_pc(tmp_path):
             await page.wait_for_selector("h2:has-text('Journal of Biomedical Informatics')", timeout=10000)
             for text in ("10.8 (Q1, 95th percentile)", "Eligible for subsidy", "Covered (Hybrid)", "Coverage 2001-2026"):
                 assert await page.is_visible(f"text={text}"), text
+            first_tile = page.locator(".tile").first
+            assert "SJR quartile 2025" in await first_tile.inner_text() and "Q1 (SJR 1.612)" in await first_tile.inner_text()
+            assert await page.is_visible("article:has(h3:has-text('SCImago (SJR)')) >> text=Health Informatics")
+            assert await page.is_visible(".tile:has-text('CiteScore 2025 (not SJR)')")
             assert await page.is_visible("article:has(h3:has-text('Kanalregister')) >> text=Not checked")
             guide = page.locator(".templates a", has_text="Author guidelines for this journal")
             assert await guide.get_attribute("href") == \
@@ -184,6 +188,7 @@ def test_phone_searches_lists_without_pc(tmp_path):
             await page.fill("input[name=q]", "0000-0019")
             await page.click("button:has-text('Check journal')")
             await page.wait_for_selector("text=Not in Scopus")
+            assert await page.is_visible(".tile:has-text('Not ranked by SCImago')")
 
             assert not errors, errors
             await browser.close()
@@ -196,13 +201,13 @@ def test_phone_searches_lists_without_pc(tmp_path):
 
 
 def test_phone_find_journals(tmp_path):
-    from tests.reflist_samples import get_bytes_for
+    from tests.reflist_samples import get_bytes_for, sjr_rows
 
     fake = FakeSupabase()
     api, api_url = fake.serve()
     web, web_url = serve_web(api_url)
     pc = SyncEngine(Database(tmp_path / "pc.db"), {}, lambda s: None, lambda *a: {}, opener=fake.opener,
-                    get_bytes=get_bytes_for(tmp_path), tmp_dir=tmp_path / "lists")
+                    get_bytes=get_bytes_for(tmp_path), tmp_dir=tmp_path / "lists", sjr_rows=sjr_rows)
     pc.sign_in(api_url, "sb_publishable_test", EMAIL, PASSWORD)
     pc.cycle()   # loads the CREST and SANLiC lists
 
@@ -227,6 +232,7 @@ def test_phone_find_journals(tmp_path):
             jbi = page.locator(".d-item", has_text="Journal of Biomedical Informatics").first
             assert "DHET eligible" in await jbi.inner_text()
             assert "SANLiC covered (Hybrid)" in await jbi.inner_text()
+            assert "SJR Q1" in await jbi.inner_text()
             ieee = page.locator(".d-item", has_text="IEEE Journal of Biomedical and Health Informatics")
             assert "Not on DHET list" in await ieee.inner_text()
             brain = page.locator(".d-item", has_text="Brain Informatics")
@@ -235,6 +241,12 @@ def test_phone_find_journals(tmp_path):
             assert "DHET: Discontinued" in await disc.inner_text()           # found through the CREST list
             if SHOTS:
                 await page.screenshot(path=f"{SHOTS}/phone_find_title.png", full_page=True)
+            assert "Not ranked by SCImago" in await ieee.inner_text()
+            total = await page.locator(".d-item").count()
+            await page.select_option("select[aria-label='SJR quartile']", "1")
+            assert await page.locator(".d-item").count() == 1                 # only JBI is SJR Q1 in the sample
+            await page.select_option("select[aria-label='SJR quartile']", "")
+            assert await page.locator(".d-item").count() == total
             await page.check("label.check:has-text('DHET eligible') input")
             assert await page.locator(".d-item").count() == 1
             assert await page.evaluate("document.documentElement.scrollWidth") <= 393
@@ -270,13 +282,13 @@ def test_phone_find_journals(tmp_path):
 
 
 def test_phone_saved_journals(tmp_path):
-    from tests.reflist_samples import get_bytes_for
+    from tests.reflist_samples import get_bytes_for, sjr_rows
 
     fake = FakeSupabase()
     api, api_url = fake.serve()
     web, web_url = serve_web(api_url)
     pc = SyncEngine(Database(tmp_path / "pc.db"), {}, lambda s: None, lambda *a: {}, opener=fake.opener,
-                    get_bytes=get_bytes_for(tmp_path), tmp_dir=tmp_path / "lists")
+                    get_bytes=get_bytes_for(tmp_path), tmp_dir=tmp_path / "lists", sjr_rows=sjr_rows)
     pc.sign_in(api_url, "sb_publishable_test", EMAIL, PASSWORD)
     pc.cycle()
 
@@ -313,8 +325,9 @@ def test_phone_saved_journals(tmp_path):
             await page.click("button.saved-btn:has-text('(1)')")
             await page.wait_for_selector(".saved-table")
             cells = await page.locator(".saved-row td").all_inner_texts()
-            assert "Journal of Biomedical Informatics" in cells[0] and "10.8" in cells[1] and "Q1" in cells[1]
-            assert cells[2] == "Eligible" and cells[3] == "Covered" and cells[5] == "USD 3,550 (list price)"
+            assert "Journal of Biomedical Informatics" in cells[0] and "1.612" in cells[1] and "Q1" in cells[1]
+            assert "10.8" in cells[2] and "Q1" in cells[2]
+            assert cells[3] == "Eligible" and cells[4] == "Covered" and cells[6] == "USD 3,550 (list price)"
             if SHOTS:
                 await page.screenshot(path=f"{SHOTS}/phone_saved.png", full_page=True)
 
@@ -352,13 +365,13 @@ def test_phone_saved_journals(tmp_path):
 
 
 def test_phone_find_star_and_filters(tmp_path):
-    from tests.reflist_samples import get_bytes_for
+    from tests.reflist_samples import get_bytes_for, sjr_rows
 
     fake = FakeSupabase()
     api, api_url = fake.serve()
     web, web_url = serve_web(api_url)
     pc = SyncEngine(Database(tmp_path / "pc.db"), {}, lambda s: None, lambda *a: {}, opener=fake.opener,
-                    get_bytes=get_bytes_for(tmp_path), tmp_dir=tmp_path / "lists")
+                    get_bytes=get_bytes_for(tmp_path), tmp_dir=tmp_path / "lists", sjr_rows=sjr_rows)
     pc.sign_in(api_url, "sb_publishable_test", EMAIL, PASSWORD)
     pc.cycle()
 
@@ -458,7 +471,7 @@ def test_phone_updates_older_reports_through_the_pc(tmp_path):
             await page.click("button:has-text('Sign in')")
             await page.wait_for_selector("button:has-text('Update 1 older report on my PC')")
             await page.click(".reports button")
-            await page.wait_for_selector("text=Made before word and page limits was added.")
+            await page.wait_for_selector("text=Made before word and page limits, SJR quartile were added.")
             await page.click("button:has-text('Back')")
             await page.click("button:has-text('Update 1 older report on my PC')")
             await page.wait_for_selector("text=Waiting for your PC")

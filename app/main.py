@@ -21,9 +21,10 @@ from . import discover
 from .fetch import Fetcher
 from .lists import LocalLists
 from .paths import default_data_dir
-from .report import build_report, partial_report
+from .report import _glance, build_report, partial_report
+from .sources import sjr
 from .storage import Database
-from .util import refresh_query
+from .util import REPORT_SECTIONS, normalise_title, refresh_query
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 ROOT = Path(__file__).resolve().parent.parent
@@ -37,7 +38,9 @@ async def lifespan(app: FastAPI):
     app.state.loop = asyncio.get_running_loop()
     if getattr(app.state, "db", None) is None:
         app.state.db = Database(default_data_dir() / "journal_scope.db")
-    app.state.lists = LocalLists(app.state.fetcher, getattr(app.state, "lists_dir", None) or default_data_dir() / "lists")
+    lists_dir = getattr(app.state, "lists_dir", None) or default_data_dir() / "lists"
+    app.state.lists = LocalLists(app.state.fetcher, lists_dir)
+    app.state.sjr = sjr.SjrList(app.state.fetcher, lists_dir, download=app.state.download)
     yield
     await app.state.fetcher.close()
 
@@ -45,6 +48,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Journal Scope", lifespan=lifespan)
 app.state.db = None
 app.state.renderer = None        # the desktop app's Qt WebEngine renderer
+app.state.download = None        # its file download (SCImago's list, when SCImago asks for a human check)
 app.state.scopus_credentials = lambda: (None, None)   # (API key, institution token); desktop settings
 app.state.openalex_key = lambda: None                 # optional OpenAlex API key; desktop settings
 app.state.status = lambda: {}          # replaced by the desktop app (sync status)
@@ -69,7 +73,7 @@ async def run_lookup(q: str, sid: str | None = None, site: str | None = None) ->
             results[k] = result
 
     return await build_report(app.state.fetcher, q, source_id=sid, site_url=site, scopus_key=key, scopus_token=token,
-                              progress=on_progress, openalex_key=app.state.openalex_key())
+                              progress=on_progress, openalex_key=app.state.openalex_key(), sjr_list=app.state.sjr)
 
 
 @app.get("/")
@@ -126,6 +130,14 @@ async def redo_report(uid: str, live: bool = False) -> dict:
     old = app.state.db.get_report(uid)
     if old is None:
         raise HTTPException(404, "Report not found.")
+    missing = [k for k in REPORT_SECTIONS if k not in (old.get("sources") or {})]
+    if missing == ["sjr"]:   # only the SJR list is new: add it without running every source again
+        rep = await add_sjr(old)
+        app.state.db.add_report(rep, uid=uid, keep_created=True)
+        app.state.on_report(uid)
+        rep = app.state.db.get_report(uid)
+        rep["saved"] = _saved_uid(rep)
+        return rep
     q = refresh_query(old)
     if not q:
         raise HTTPException(400, "This report has no title or ISSN to search for.")
@@ -134,13 +146,26 @@ async def redo_report(uid: str, live: bool = False) -> dict:
     else:
         key, token = app.state.scopus_credentials()
         rep = await build_report(app.state.fetcher, q, scopus_key=key, scopus_token=token,
-                                 openalex_key=app.state.openalex_key())
+                                 openalex_key=app.state.openalex_key(), sjr_list=app.state.sjr)
     if rep.get("candidates"):
         raise HTTPException(409, f"“{q}” now matches several journals; search for it by ISSN instead.")
     app.state.db.add_report(rep, uid=uid, keep_created=True)
     app.state.on_report(uid)
     rep = app.state.db.get_report(uid)
     rep["saved"] = _saved_uid(rep)
+    return rep
+
+
+async def add_sjr(report: dict) -> dict:
+    """An existing report with SCImago's SJR section added (from the downloaded list; no other source re-run)."""
+    ident = report.get("identity") or {}
+    rep = {k: v for k, v in report.items() if k not in ("uid", "created_at", "saved")}
+    rep["sources"] = dict(rep.get("sources") or {})
+    res = await sjr.lookup(app.state.sjr, ident.get("issns") or [], ident.get("title"))
+    if res["status"] == "error":
+        raise HTTPException(502, res["error"])
+    rep["sources"]["sjr"] = res
+    rep["glance"] = _glance(rep)
     return rep
 
 
@@ -260,7 +285,24 @@ async def refmatch(body: dict = Body(...)):
     await app.state.lists.ensure()
     issns = [str(i) for i in body.get("issns", [])][:500]
     titles = [str(t) for t in body.get("titles", [])][:200]
-    return {**app.state.lists.match(issns, titles), "errors": app.state.lists.errors}
+    errors = dict(app.state.lists.errors)
+    rows: list[dict] = []
+    try:
+        # A first download can wait for SCImago's human check; don't hold the search results for it.
+        await asyncio.wait_for(asyncio.shield(app.state.sjr.ensure()), 20)
+        want, names = set(issns), {normalise_title(t) for t in titles if t}
+        rows = [r for r in app.state.sjr.rows or [] if want & set(r["issns"]) or r["title_norm"] in names]
+    except asyncio.TimeoutError:
+        errors["sjr"] = "SCImago's list is still downloading; search again in a minute"
+    except Exception as exc:
+        errors["sjr"] = str(exc)
+    return {**app.state.lists.match(issns, titles), "sjr": rows, "errors": errors}
+
+
+async def sjr_rows() -> tuple[str, str, list[dict]]:
+    """(version, source URL, rows) of SCImago's list, for the phone's copy in Supabase."""
+    await app.state.sjr.ensure()
+    return app.state.sjr.version(), sjr.DOWNLOAD, app.state.sjr.rows or []
 
 
 @app.get("/api/status")

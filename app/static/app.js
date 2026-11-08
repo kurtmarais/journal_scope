@@ -169,7 +169,7 @@ async function run(params) {
   const qs = new URLSearchParams(Object.entries(params).filter(([, v]) => v));
   $("#go").disabled = true;
   $("#out").replaceChildren();
-  const LABELS = { scopus: "Scopus", crest: "CREST", sanlic: "SANLiC", kanalregister: "Kanalregister", journal_site: "Journal website", guidelines: "Author guidelines" };
+  const LABELS = { scopus: "Scopus", crest: "CREST", sanlic: "SANLiC", kanalregister: "Kanalregister", journal_site: "Journal website", guidelines: "Author guidelines", sjr: "SCImago (SJR)" };
   const STATE = { working: "checking…", found: "done", not_found: "done", skipped: "skipped", error: "failed" };
   const started = Date.now();
   setStatus("Checking Scopus, CREST, SANLiC, Kanalregister and the journal website…");

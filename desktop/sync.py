@@ -162,8 +162,10 @@ class SyncEngine:
     def __init__(self, db: Database, settings: dict, save_settings: Callable[[dict], None],
                  lookup: Lookup, opener: Opener | None = None,
                  get_bytes: Callable[[str], bytes] | None = None,
-                 tmp_dir: Path | None = None):
+                 tmp_dir: Path | None = None,
+                 sjr_rows: Callable[[], tuple] | None = None):
         self.db = db
+        self.sjr_rows = sjr_rows
         self.get_bytes = get_bytes
         self.tmp_dir = tmp_dir
         self.force_lists = False
@@ -285,7 +287,8 @@ class SyncEngine:
         from . import reflists
         self.force_lists = False
         self.settings["ref_tried_at"] = time.time()
-        results = reflists.refresh(client or self.client(), self._token, self.get_bytes, self.tmp_dir or Path("."))
+        results = reflists.refresh(client or self.client(), self._token, self.get_bytes, self.tmp_dir or Path("."),
+                                   sjr_rows=self.sjr_rows)
         if all(v.startswith("ok") for v in results.values()):
             self.settings["ref_refreshed_at"] = time.time()
         self.settings["ref_results"] = results

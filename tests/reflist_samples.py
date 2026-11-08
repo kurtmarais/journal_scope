@@ -39,3 +39,10 @@ def get_bytes_for(tmp: Path):
         "https://db.crest.sun.ac.za/zapublications/downloadfile/downloadable_journal_master_list_20260811.xlsx": crest,
     }
     return lambda url: pages[url]
+
+
+def sjr_rows():
+    """What the desktop server hands the phone-list upload: SCImago's list (here, the sample)."""
+    from app.sources import sjr
+    year, rows = sjr.parse_csv((Path(__file__).parent / "fixtures" / "scimagojr_sample.csv").read_bytes())
+    return f"SJR {year}", sjr.DOWNLOAD, rows

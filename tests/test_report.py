@@ -51,6 +51,10 @@ class FakeFetcher:
         if "doaj.org" in url:
             r.status_code, r.text = 200, '{"results": []}'
             return r
+        if "scimagojr.com" in url:
+            r.content = (FIX / "scimagojr_sample.csv").read_bytes()
+            r.status_code, r.text = 200, r.content.decode()
+            return r
         assert headers and headers.get("X-ELS-APIKey") == "test-key"
         if "/issn/1532-0464" in url or "/issn/1532-0480" in url:
             r.status_code, r.text = 200, (FIX / "scopus_issn.json").read_text()
@@ -84,11 +88,12 @@ def make_xlsx(path: Path) -> Path:
 
 
 def test_full_report(tmp_path):
+    from app.sources.sjr import SjrList
     fetcher = FakeFetcher(make_xlsx(tmp_path / "l.xlsx"))
-    r = asyncio.run(build_report(fetcher, "1532-0464", scopus_key="test-key"))
+    r = asyncio.run(build_report(fetcher, "1532-0464", scopus_key="test-key", sjr_list=SjrList(fetcher, tmp_path)))
     s = r["sources"]
     assert {k: v["status"] for k, v in s.items()} == {
-        "scopus": "found", "crest": "found", "kanalregister": "found", "sanlic": "found", "journal_site": "found", "apc": "found", "guidelines": "found",
+        "scopus": "found", "crest": "found", "kanalregister": "found", "sanlic": "found", "journal_site": "found", "apc": "found", "guidelines": "found", "sjr": "found",
     }
     assert s["apc"]["data"]["openalex"]["apc_usd"] == 3550
     tile = next(g for g in r["glance"] if g["label"] == "APC")
@@ -102,8 +107,10 @@ def test_full_report(tmp_path):
     assert g["status"] == "found" and g["url"].endswith("/publish/guide-for-authors")
     assert any(l["kind"] == "abstract" and l["value"] == "250 words" for l in g["data"]["limits"])
     labels = [g["label"] for g in r["glance"]]
-    assert "CiteScore 2025" in labels
-    cs = next(g for g in r["glance"] if g["label"] == "CiteScore 2025")
+    assert labels[0] == "SJR quartile 2025" and r["glance"][0]["value"] == "Q1 (SJR 1.612)"   # SJR first
+    assert (tmp_path / "scimagojr.csv").exists()                                           # kept for next time
+    assert "CiteScore 2025 (not SJR)" in labels and not any(l.startswith("SJR 20") for l in labels)
+    cs = next(g for g in r["glance"] if g["label"] == "CiteScore 2025 (not SJR)")
     assert cs["value"] == "10.8 (Q1, 95th percentile)"
     assert "DHET subsidy" in labels and "Norwegian Register" in labels and "SANLiC APC agreement" in labels
     assert not r["candidates"]
@@ -158,7 +165,7 @@ def test_hanging_source_times_out_without_blocking_the_report(tmp_path, monkeypa
     k = r["sources"]["kanalregister"]
     assert k["status"] == "error" and "No answer within 0.3 seconds" in k["error"]
     assert r["sources"]["crest"]["status"] == "found" and r["sources"]["journal_site"]["status"] == "found"
-    assert set(r["timings"]) == {"scopus", "crest", "sanlic", "kanalregister", "journal_site", "apc", "guidelines"}
+    assert set(r["timings"]) == {"scopus", "crest", "sanlic", "kanalregister", "journal_site", "apc", "guidelines", "sjr"}
     assert seen["kanalregister"] == "error" and seen["scopus"] == "found"
 
 
@@ -192,7 +199,7 @@ def test_partial_report_and_kanalregister_shortcuts(tmp_path, monkeypatch):
     # A partial report shows finished sources and 'working' for the rest
     p = rep.partial_report("1532-0464", {"scopus": r["sources"]["scopus"]})
     assert p["sources"]["crest"]["status"] == "working" and p["identity"]["title"] == "Journal of Biomedical Informatics"
-    assert [g["label"] for g in p["glance"]][:2] == ["Indexed in Scopus", "CiteScore 2025"]
+    assert [g["label"] for g in p["glance"]][:2] == ["Indexed in Scopus", "CiteScore 2025 (not SJR)"]
 
 
 def test_apc_tile_priorities():

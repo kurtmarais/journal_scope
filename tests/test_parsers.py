@@ -210,3 +210,33 @@ def test_guideline_urls():
     html = '<a href="/about">About</a><a href="/authors/guide">Guide for Authors</a><a href="/for-authors">For authors</a>'
     assert guidelines.guideline_links(html, "https://example.org/j") == \
         ["https://example.org/authors/guide", "https://example.org/for-authors"]
+
+
+def test_sjr_csv():
+    from app.sources import sjr
+    year, rows = sjr.parse_csv((FIX / "scimagojr_sample.csv").read_bytes())
+    assert year == "2025" and len(rows) == 4
+    jbi = rows[0]
+    assert jbi["key"] == "23571" and jbi["issns"] == ["1532-0480", "1532-0464"]
+    assert jbi["sjr"] == 1.612 and jbi["quartile"] == "Q1" and jbi["h_index"] == 135
+    assert jbi["categories"] == [{"name": "Computer Science Applications", "quartile": "Q1"},
+                                 {"name": "Health Informatics", "quartile": "Q1"}]
+    assert rows[1]["categories"][2] == {"name": "Library and Information Sciences", "quartile": "Q2"}
+    unranked = rows[3]
+    assert unranked["sjr"] is None and unranked["quartile"] is None and unranked["issns"] == []
+    with pytest.raises(ValueError):
+        sjr.parse_csv(b"<html><title>Just a moment...</title></html>")
+
+
+def test_sjr_list_lookup(tmp_path):
+    import asyncio
+    import shutil
+
+    from app.sources import sjr
+    shutil.copy(FIX / "scimagojr_sample.csv", tmp_path / "scimagojr.csv")
+    lst = sjr.SjrList(fetcher=None, folder=tmp_path)            # fresh copy on disk: no download
+    res = asyncio.run(sjr.lookup(lst, ["1532-0464"], None))
+    assert res["status"] == "found" and res["data"]["quartile"] == "Q1" and res["data"]["year"] == "2025"
+    assert res["url"] == "https://www.scimagojr.com/journalsearch.php?q=23571&tip=sid"
+    assert asyncio.run(sjr.lookup(lst, [], "Information Systems Journal"))["data"]["sjr"] == 2.103
+    assert asyncio.run(sjr.lookup(lst, ["0000-0000"], "Nope"))["status"] == "not_found"

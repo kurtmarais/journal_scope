@@ -31,8 +31,9 @@ class Server:
     thread, so the window can appear while it loads.
     """
 
-    def __init__(self, db, status, on_report, renderer=None, scopus_credentials=None, openalex_key=None, lists_dir=None):
-        self._hooks = dict(db=db, status=status, on_report=on_report, renderer=renderer,
+    def __init__(self, db, status, on_report, renderer=None, scopus_credentials=None, openalex_key=None, lists_dir=None,
+                 download=None):
+        self._hooks = dict(db=db, status=status, on_report=on_report, renderer=renderer, download=download,
                            scopus_credentials=scopus_credentials or (lambda: (None, None)),
                            openalex_key=openalex_key or (lambda: None), lists_dir=lists_dir)
         self.port = _free_port()
@@ -79,6 +80,13 @@ class Server:
         self.ready.wait(60)
         web = self._web
         fut = asyncio.run_coroutine_threadsafe(web.run_lookup(q, sid, site), web.app.state.loop)
+        return fut.result(timeout=600)
+
+    def sjr_rows(self) -> tuple[str, str, list[dict]]:
+        """SCImago's list for the phone (called from the sync thread)."""
+        self.ready.wait(60)
+        web = self._web
+        fut = asyncio.run_coroutine_threadsafe(web.sjr_rows(), web.app.state.loop)
         return fut.result(timeout=600)
 
     def stop(self) -> None:

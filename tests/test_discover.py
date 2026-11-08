@@ -124,6 +124,8 @@ def test_desktop_endpoints(tmp_path, monkeypatch):
     main.app.state.openalex_key = lambda: "oa"
     main.app.state.lists_dir = tmp_path
     main.app.state.db = None
+    import shutil
+    shutil.copy(Path(__file__).parent / "fixtures" / "scimagojr_sample.csv", tmp_path / "scimagojr.csv")
     with TestClient(main.app) as c:
         assert c.get("/api/discover/openalex", params={"q": "informatics", "mode": "scope"}).json() == {"mode": "scope", "q": "informatics", "key": "oa"}
         r = c.get("/api/discover/scopus", params={"q": "informatics", "mode": "scope"})
@@ -131,6 +133,7 @@ def test_desktop_endpoints(tmp_path, monkeypatch):
         assert c.get("/api/discover/crest", params={"q": "biomedical"}).json()["results"][0]["key"] == "JNL_1"
         m = c.post("/api/refmatch", json={"issns": ["1532-0480"], "titles": []}).json()
         assert m["crest"][0]["key"] == "JNL_1" and m["sanlic"] == []
+        assert m["sjr"][0]["quartile"] == "Q1" and m["sjr"][0]["key"] == "23571"
         assert c.get("/api/discover/openalex", params={"q": "x"}).status_code == 422     # too short
     main.app.state.openalex_key = lambda: None
 
@@ -211,5 +214,14 @@ def test_update_older_reports(tmp_path, monkeypatch):
             assert r.status_code == 409
             assert c.post(f"/api/history/{current}/refresh").json()["uid"] == current
             assert c.post("/api/history/nope/refresh").status_code == 404
+            # A report missing only the SJR section gets it from SCImago's list, without re-running the rest
+            import shutil
+            shutil.copy(Path(__file__).parent / "fixtures" / "scimagojr_sample.csv", tmp_path / "scimagojr.csv")
+            only_sjr = db.add_report({"query": "1532-0464", "identity": {"title": "JBI", "issns": ["1532-0464"]}, "glance": [],
+                                      "sources": {k: {"status": "skipped", "data": {}} for k in REPORT_SECTIONS if k != "sjr"}})
+            before = len(calls)
+            rep = c.post(f"/api/history/{only_sjr}/refresh").json()
+            assert len(calls) == before                               # no full lookup
+            assert rep["sources"]["sjr"]["data"]["quartile"] == "Q1" and rep["glance"][0]["label"] == "SJR quartile 2025"
     finally:
         main.app.state.db = None

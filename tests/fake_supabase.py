@@ -18,7 +18,7 @@ from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 EMAIL, PASSWORD = "me@example.org", "correct horse"
-TABLES = ("journal_reports", "journal_requests", "journal_saved", "ref_crest", "ref_sanlic", "ref_lists")
+TABLES = ("journal_reports", "journal_requests", "journal_saved", "ref_crest", "ref_sanlic", "ref_lists", "ref_sjr")
 DEFAULTS = {
     "journal_reports": {"query": "", "title": "", "issns": [], "report": {}, "deleted": False},
     "journal_requests": {"query": "", "sid": None, "site": None, "status": "pending", "report_uid": None,

@@ -6,7 +6,7 @@ import { apcFromSources, findSaved, h, journalKey, missingSections, normaliseIss
 import { AuthError, Supabase, SyncError } from "./supabase.js";
 import { discover, recordToReport, renderDiscover } from "./discover.js";
 
-const APP_VERSION = "2026.11.9";   // shown at the bottom of the home screen; bump with each phone change
+const APP_VERSION = "2026.11.10";   // shown at the bottom of the home screen; bump with each phone change
 const root = document.getElementById("root");
 const LS = {
   get: (k, d = null) => { try { const v = localStorage.getItem("js." + k); return v === null ? d : JSON.parse(v); } catch { return d; } },
@@ -199,15 +199,18 @@ async function quickSearch(query, site, sourceId = null) {
       if (!oa && !dj) return null;
       return apcFromSources(((oa || {}).sources || [])[0], ((dj || {}).results || [])[0]);
     })();
-    const [crestRows, sanlicRows] = await Promise.all([
+    const sjrList = lists.some((l) => l.key === "sjr");   // needs 20261108090000_sjr_list.sql and the PC's upload
+    const [crestRows, sanlicRows, sjrRows] = await Promise.all([
       issns.length ? api.select("ref_crest", { or: `(issn.in.${inList},eissn.in.${inList})`, limit: "1" }, t) : Promise.resolve([]),
       issns.length ? api.select("ref_sanlic", { issns: `ov.{${issns.join(",")}}`, limit: "1" }, t) : Promise.resolve([]),
+      issns.length && sjrList ? api.select("ref_sjr", { issns: `ov.{${issns.join(",")}}`, limit: "1" }, t).catch(() => []) : Promise.resolve([]),
     ]);
     const norm = normaliseTitle(title);
     const crest = crestRows[0] || (norm ? (await api.select("ref_crest", { title_norm: `eq.${norm}`, limit: "1" }, t))[0] : null) || null;
     const sanlic = sanlicRows[0] || (norm ? (await api.select("ref_sanlic", { title_norm: `eq.${norm}`, limit: "1" }, t))[0] : null) || null;
+    const sjr = sjrRows[0] || (norm && sjrList ? (await api.select("ref_sjr", { title_norm: `eq.${norm}`, limit: "2" }, t).catch(() => [])).filter((_, i, a) => a.length === 1)[0] : null) || null;
     const apc = await apcPromise;
-    const report = quickReport(query, { scopus, scopusNote, scopusError, crest, sanlic, lists, issns, title, apc });
+    const report = quickReport(query, { scopus, scopusNote, scopusError, crest, sanlic, sjr, lists, issns, title, apc });
     state.view = { name: "quick", query, site, report, sid: issns[0] || null, listsLoaded: lists.length > 0 };
   } catch (e) {
     state.view = { name: "quick", query, site, error: e.message };
@@ -230,22 +233,25 @@ function phoneProvider(api, t) {
       return { results: rows };
     },
     async refmatch(issns, titles) {
-      const crest = [], sanlic = [];
+      const crest = [], sanlic = [], sjr = [];
+      const lists = await api.select("ref_lists", {}, t);
+      const errors = {};
+      for (const k of ["crest", "sanlic", "sjr"]) if (!lists.some((l) => l.key === k)) errors[k] = "list not loaded yet";
+      const withSjr = !errors.sjr;
       for (const part of chunks(issns, 40)) {
         const list = `(${part.join(",")})`;
         crest.push(...await api.select("ref_crest", { or: `(issn.in.${list},eissn.in.${list})` }, t));
         sanlic.push(...await api.select("ref_sanlic", { issns: `ov.{${part.join(",")}}` }, t));
+        if (withSjr) sjr.push(...await api.select("ref_sjr", { issns: `ov.{${part.join(",")}}` }, t));
       }
       const names = titles.map(normaliseTitle).filter(Boolean);
       for (const part of chunks(names, 20)) {
         const list = `(${part.map((n) => `"${n}"`).join(",")})`;
         crest.push(...await api.select("ref_crest", { title_norm: `in.${list}` }, t));
         sanlic.push(...await api.select("ref_sanlic", { title_norm: `in.${list}` }, t));
+        if (withSjr) sjr.push(...await api.select("ref_sjr", { title_norm: `in.${list}` }, t));
       }
-      const lists = await api.select("ref_lists", {}, t);
-      const errors = {};
-      for (const k of ["crest", "sanlic"]) if (!lists.some((l) => l.key === k)) errors[k] = "list not loaded yet";
-      return { crest, sanlic, errors };
+      return { crest, sanlic, sjr, errors };
     },
   };
 }
@@ -505,7 +511,7 @@ function quickScreen(v) {
         `Open full report (${dateFmt(full.created_at)})`),
       h("button", { class: "secondary", onclick: () => requestLookup(v.query, v.site, v.sid) },
         full ? "Refresh full report on my PC" : "Get full report from my PC")),
-    h("p", { class: "note" }, "Instant check from Scopus and the CREST and SANLiC lists. The full report adds Kanalregister and the journal's own statistics; your PC runs it when it is on."),
+    h("p", { class: "note" }, "Instant check from SCImago's SJR list, Scopus and the CREST and SANLiC lists. The full report adds Kanalregister and the journal's own statistics; your PC runs it when it is on."),
     renderReport(v.report, starOpts(v.report)));
 }
 
