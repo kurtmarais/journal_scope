@@ -108,6 +108,7 @@ def test_full_report(tmp_path):
     assert any(l["kind"] == "abstract" and l["value"] == "250 words" for l in g["data"]["limits"])
     labels = [g["label"] for g in r["glance"]]
     assert labels[0] == "SJR quartile 2025" and r["glance"][0]["value"] == "Q1 (SJR 1.612)"   # SJR first
+    assert labels[1] == "CiteScore 2025 (not SJR)" and labels[-1] == "Indexed in Scopus"
     assert (tmp_path / "scimagojr.csv").exists()                                           # kept for next time
     assert "CiteScore 2025 (not SJR)" in labels and not any(l.startswith("SJR 20") for l in labels)
     cs = next(g for g in r["glance"] if g["label"] == "CiteScore 2025 (not SJR)")
@@ -199,7 +200,8 @@ def test_partial_report_and_kanalregister_shortcuts(tmp_path, monkeypatch):
     # A partial report shows finished sources and 'working' for the rest
     p = rep.partial_report("1532-0464", {"scopus": r["sources"]["scopus"]})
     assert p["sources"]["crest"]["status"] == "working" and p["identity"]["title"] == "Journal of Biomedical Informatics"
-    assert [g["label"] for g in p["glance"]][:2] == ["Indexed in Scopus", "CiteScore 2025 (not SJR)"]
+    labels = [g["label"] for g in p["glance"]]
+    assert labels[0] == "CiteScore 2025 (not SJR)" and labels[-1] == "Indexed in Scopus"
 
 
 def test_apc_tile_priorities():

@@ -6,7 +6,7 @@ import { apcFromSources, findSaved, h, journalKey, missingSections, normaliseIss
 import { AuthError, Supabase, SyncError } from "./supabase.js";
 import { discover, recordToReport, renderDiscover } from "./discover.js";
 
-const APP_VERSION = "2026.11.10";   // shown at the bottom of the home screen; bump with each phone change
+const APP_VERSION = "2026.11.11";   // shown at the bottom of the home screen; bump with each phone change
 const root = document.getElementById("root");
 const LS = {
   get: (k, d = null) => { try { const v = localStorage.getItem("js." + k); return v === null ? d : JSON.parse(v); } catch { return d; } },
@@ -327,10 +327,13 @@ function signInScreen() {
 const TONES = { good: "good", warn: "warn", bad: "bad" };
 function miniChips(glance) {
   const pick = ["DHET subsidy", "Norwegian Register", "SANLiC APC agreement"];
-  const items = (glance || []).filter((g) => pick.includes(g.label) || g.label.startsWith("CiteScore"));
+  const all = glance || [];
+  const items = [...all.filter((g) => g.source === "sjr"),
+    ...all.filter((g) => g.source !== "sjr" && (pick.includes(g.label) || g.label.startsWith("CiteScore")))];
   return h("div", { class: "mini" }, items.map((g) => h("span", { class: `tag ${TONES[g.tone] || "neutral"}` },
+    g.source === "sjr" ? (/^Q\d/.test(g.value) ? `SJR ${g.value.slice(0, 2)}` : g.value) :
     g.label.startsWith("CiteScore") ? "CiteScore " + g.value.replace(/^([\d.]+)(?: \((Q\d).*)?$/, (m, v, q) => q ? `${v} ${q}` : v) :
-    g.label.startsWith("SJR") ? g.value.replace(/^.*\((Q\d)\).*$/, "$1") : g.label === "DHET subsidy" ? `DHET: ${g.value}` : g.value)));
+    g.label === "DHET subsidy" ? `DHET: ${g.value}` : g.value)));
 }
 
 function requestRow(r) {

@@ -17,6 +17,7 @@ def _glance(report: dict) -> list[dict]:
     working = {"status": "working", "data": {}}
     s = {k: report["sources"].get(k) or working for k in ("scopus", "crest", "kanalregister", "sanlic", "journal_site", "apc", "sjr")}
     out: list[dict] = []
+    indexed = None   # "Indexed in Scopus" goes last; the two quartile tiles (SJR, CiteScore) lead
 
     sj = s["sjr"]
     if sj["status"] == FOUND and (sj["data"].get("quartile") or sj["data"].get("sjr") is not None):
@@ -35,12 +36,12 @@ def _glance(report: dict) -> list[dict]:
         d = sc["data"]
         last = d.get("coverage_last_year") or (d.get("citescore") or {}).get("year")
         current = last is not None and last >= date.today().year - 2
-        out.append({
+        indexed = {
             "label": "Indexed in Scopus",
             "value": f"Coverage {d['coverage']}" if d.get("coverage") else "Listed",
             "tone": "good" if current else "warn",
             "source": "scopus",
-        })
+        }
         cs = d.get("citescore")
         if cs and cs.get("value") is not None:
             q, pct = d.get("best_quartile"), d.get("best_percentile")
@@ -54,7 +55,7 @@ def _glance(report: dict) -> list[dict]:
         if d.get("sjr") and sj["status"] != FOUND:   # SCImago's tile above already shows the SJR
             out.append({"label": f"SJR {d['sjr']['year']}", "value": f"{d['sjr']['value']:.3f}", "tone": "neutral", "source": "scopus"})
     elif sc["status"] == "not_found" and not report.get("candidates"):
-        out.append({"label": "Indexed in Scopus", "value": "Not found", "tone": "bad", "source": "scopus"})
+        indexed = {"label": "Indexed in Scopus", "value": "Not found", "tone": "bad", "source": "scopus"}
 
     c = s["crest"]
     if c["status"] == FOUND:
@@ -92,6 +93,8 @@ def _glance(report: dict) -> list[dict]:
         m = j["data"].get("metrics", {}).get(key)
         if m:
             out.append({"label": m["label"], "value": m["value"], "tone": "neutral", "source": "journal_site"})
+    if indexed:
+        out.append(indexed)
     return out
 
 

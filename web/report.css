@@ -24,6 +24,8 @@ a { color: var(--accent); }
 .identity .meta { color: var(--muted); }
 .timings { color: var(--muted); font-size: .75rem; margin: -12px 0 14px; }
 .glance { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 10px; margin: 14px 0 22px; }
+.glance-wrap .glance.quartiles { grid-template-columns: repeat(2, minmax(0, 1fr)); max-width: 640px; margin-bottom: 10px; }
+.glance-wrap .glance.quartiles + .glance { margin-top: 0; }
 .tile { border-radius: var(--radius); padding: 10px 12px; }
 .tile .l { font-size: .78rem; opacity: .85; }
 .tile .v { font-size: 1.05rem; font-weight: 650; margin-top: 2px; word-break: break-word; }

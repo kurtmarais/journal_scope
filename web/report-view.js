@@ -434,10 +434,25 @@ function templatesCard(report) {
     h("ul", { class: "tlinks" }, links.map((l) => h("li", {}, link(l.url, l.label), l.note && h("span", { class: "ctx" }, ` (${l.note})`)))));
 }
 
+// The two quartile rankings (SJR, then CiteScore) sit side by side in their own row; "Indexed in Scopus" goes last.
+const isQuartileTile = (g) => g.source === "sjr" || /^CiteScore/.test(g.label);
+
+export function orderGlance(glance) {
+  const all = glance || [];
+  const quart = all.filter(isQuartileTile).sort((a, b) => (a.source === "sjr" ? 0 : 1) - (b.source === "sjr" ? 0 : 1));
+  const rest = all.filter((g) => !isQuartileTile(g));
+  const last = rest.filter((g) => g.label === "Indexed in Scopus");
+  return { quart, rest: [...rest.filter((g) => g.label !== "Indexed in Scopus"), ...last] };
+}
+
 export function glanceTiles(glance) {
-  return h("div", { class: "glance" }, (glance || []).map((g) =>
-    h("div", { class: `tile ${g.tone}` },
-      h("div", { class: "l" }, g.label), h("div", { class: "v" }, g.value), h("div", { class: "s" }, { sjr: "SCImago", journal_site: "journal site" }[g.source] || g.source.replace("_", " ")))));
+  const tile = (g) => h("div", { class: `tile ${g.tone}` },
+    h("div", { class: "l" }, g.label), h("div", { class: "v" }, g.value),
+    h("div", { class: "s" }, { sjr: "SCImago", journal_site: "journal site" }[g.source] || g.source.replace("_", " ")));
+  const { quart, rest } = orderGlance(glance);
+  return h("div", { class: "glance-wrap" },
+    quart.length ? h("div", { class: "glance quartiles" }, quart.map(tile)) : null,
+    rest.length ? h("div", { class: "glance" }, rest.map(tile)) : null);
 }
 
 // opts: { saved: bool, onStar: () => void, extra: Node } — the star button appears when onStar is given.
@@ -606,13 +621,14 @@ export function quickReport(query, { scopus, scopusNote, scopusError, crest, san
     sjr: sjrSource(sjr, meta.sjr),
   };
   const glance = [];
+  let indexed = null;
   const st = sjrTile(sources.sjr);
   if (st) glance.push(st);
   if (sj.status === "found") {
     const d = sj.data;
     const last = d.coverage_last_year || (d.citescore && d.citescore.year);
-    glance.push({ label: "Indexed in Scopus", value: d.coverage ? `Coverage ${d.coverage}` : "Listed",
-      tone: last >= new Date().getFullYear() - 2 ? "good" : "warn", source: "scopus" });
+    indexed = { label: "Indexed in Scopus", value: d.coverage ? `Coverage ${d.coverage}` : "Listed",
+      tone: last >= new Date().getFullYear() - 2 ? "good" : "warn", source: "scopus" };
     if (d.citescore && d.citescore.value != null) {
       const extra = d.best_quartile && d.best_percentile != null ? ` (${d.best_quartile}, ${Math.round(d.best_percentile)}th percentile)` : "";
       glance.push({ label: d.citescore.year ? `CiteScore ${d.citescore.year} (not SJR)` : "CiteScore (not SJR)", value: `${d.citescore.value.toFixed(1)}${extra}`,
@@ -620,7 +636,7 @@ export function quickReport(query, { scopus, scopusNote, scopusError, crest, san
     }
     if (d.sjr && !st) glance.push({ label: `SJR ${d.sjr.year}`, value: d.sjr.value.toFixed(3), tone: "neutral", source: "scopus" });
   } else if (sj.status === "not_found") {
-    glance.push({ label: "Indexed in Scopus", value: "Not found", tone: "bad", source: "scopus" });
+    indexed = { label: "Indexed in Scopus", value: "Not found", tone: "bad", source: "scopus" };
   }
   const c = sources.crest;
   glance.push(c.status === "found" ? { label: "DHET subsidy", value: c.data.status, tone: c.data.eligible ? "good" : "bad", source: "crest" }
@@ -630,6 +646,7 @@ export function quickReport(query, { scopus, scopusNote, scopusError, crest, san
     : { label: "SANLiC APC agreement", value: "Not covered", tone: "warn", source: "sanlic" });
   const t = apcTile({ sources });
   if (t) glance.push(t);
+  if (indexed) glance.push(indexed);
   return {
     query, quick: true, candidates: [], glance, sources,
     identity: { title: title || query, issns: issns || [], publisher: sj.data.publisher || (c.data && c.data.publisher), country: sj.data.country },

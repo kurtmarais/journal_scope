@@ -157,6 +157,12 @@ def test_phone_searches_lists_without_pc(tmp_path):
             assert "SJR quartile 2025" in await first_tile.inner_text() and "Q1 (SJR 1.612)" in await first_tile.inner_text()
             assert await page.is_visible("article:has(h3:has-text('SCImago (SJR)')) >> text=Health Informatics")
             assert await page.is_visible(".tile:has-text('CiteScore 2025 (not SJR)')")
+            # the two quartile rankings share one row; "Indexed in Scopus" comes last
+            q = page.locator(".glance.quartiles .tile")
+            assert await q.count() == 2
+            a, b = await q.nth(0).bounding_box(), await q.nth(1).bounding_box()
+            assert abs(a["y"] - b["y"]) < 1 and b["x"] > a["x"] and "CiteScore" in await q.nth(1).inner_text()
+            assert "Indexed in Scopus" in await page.locator(".glance:not(.quartiles) .tile").last.inner_text()
             assert await page.is_visible("article:has(h3:has-text('Kanalregister')) >> text=Not checked")
             guide = page.locator(".templates a", has_text="Author guidelines for this journal")
             assert await guide.get_attribute("href") == \
