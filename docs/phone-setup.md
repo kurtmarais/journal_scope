@@ -66,7 +66,10 @@ CiteScore quartiles need institutional access. Elsevier grants it to requests fr
 
 1. https://dash.cloudflare.com → **Workers & Pages → Create → Import a repository** → choose `journal_scope`.
 2. Branch: `claude/upbeat-cerf-mntinq` (or `main` once merged). Leave the build command empty; the deploy command is `npx wrangler deploy` (it reads `wrangler.jsonc`, which serves `web/`).
-3. Deploy. You get an address like `https://journal-scope.<you>.workers.dev`. Every push to that branch redeploys it.
+3. In the Worker's **Settings → Build**, on the **Production** tab:
+   - **Disable builds** must be **off**. When it is on, pushes are ignored and **Retry** only rebuilds the old commit.
+   - Under **Variables and secrets**, add `SKIP_DEPENDENCY_INSTALL` = `1`. Without it, Cloudflare installs the desktop app's Python packages (PySide6 and Playwright, several hundred MB) before every build. Variables on the **Previews Base** tab don't apply to production builds.
+4. Deploy. You get an address like `https://journal-scope.<you>.workers.dev`. Every push to that branch redeploys it; the build log should end with asset files being uploaded and `Success! Build completed`.
 
 Optional: protect the address with **Zero Trust → Access** (allow only your email), as with Sidebar.
 
