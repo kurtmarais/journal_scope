@@ -88,6 +88,7 @@ def test_phone_request_report_delete(tmp_path):
             await page.wait_for_selector("text=Waiting for your PC")
             pending = [r for r in fake.tables["journal_requests"].values() if r["status"] == "pending"]
             assert [r["query"] for r in pending] == ["1532-0464"]
+            assert await page.inner_text(".requests li b") == "Journal of Biomedical Informatics"   # the name, not the ISSN
 
             await asyncio.to_thread(engine.cycle)          # the PC picks it up
             await page.wait_for_selector("h2:has-text('Journal of Biomedical Informatics')", timeout=15000)

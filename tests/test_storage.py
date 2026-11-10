@@ -49,3 +49,20 @@ def test_saved_journals(tmp_path):
     assert {r["uid"] for r in db.dirty_saved()} == {uid, "t:a journal"}
     assert db.merge_remote_saved({"uid": "9999-9999", "title": "Remote", "issns": ["9999-9999"], "report": {"q": 1},
                                   "updated_at": 5.0, "created_at": 5.0}) is True
+
+
+
+def test_history_shows_the_journal_name_not_the_issn(tmp_path):
+    from app.storage import Database
+    db = Database(tmp_path / "t.db")
+    rep = {"query": "1532-0464", "identity": {"title": "1532-0464", "issns": ["1532-0464"]},
+           "sources": {"scopus": {"status": "not_found", "data": {}},
+                       "issn": {"status": "found", "data": {"title": "Journal of biomedical informatics"}},
+                       "crest": {"status": "found", "data": {"title": "Journal of Biomedical Informatics"}}}}
+    db.add_report(rep)
+    assert db.list_reports()[0]["title"] == "Journal of Biomedical Informatics"
+    with db._conn() as c:   # a row stored earlier under its ISSN is shown by name too
+        c.execute("update reports set title = '1532-0464'")
+    assert db.list_reports()[0]["title"] == "Journal of Biomedical Informatics"
+    db.save_journal(rep)
+    assert db.list_saved()[0]["title"] == "Journal of Biomedical Informatics"

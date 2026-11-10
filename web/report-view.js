@@ -145,6 +145,22 @@ function sjrCard(r) {
     r, body, { site: "SCImago", wide: true, chip });
 }
 
+// ---------------------------------------------------------- journal name
+const ISSN_ONLY = /^\s*\d{4}-?\d{3}[\dXx]\s*$/;
+
+/** The journal's name for a report: never just the ISSN that was searched, when any source knows the name. */
+export function reportTitle(report) {
+  const r = report || {};
+  const t = (r.identity || {}).title;
+  if (t && !ISSN_ONLY.test(t)) return t;
+  for (const k of ["scopus", "kanalregister", "crest", "sjr", "sanlic", "issn", "scimago"]) {
+    const src = (r.sources || {})[k];
+    const v = src && src.status === "found" && src.data && src.data.title;
+    if (v && !ISSN_ONLY.test(v)) return v;
+  }
+  return t || r.query || "";
+}
+
 // ------------------------------------------------------------ ISSN register
 const ISSN_PORTAL = "https://portal.issn.org/";
 
@@ -491,7 +507,7 @@ export function templateLinks(report) {
   const id = report.identity || {};
   const s = report.sources || {};
   const data = (k) => ((s[k] && s[k].status === "found" && s[k].data) || {});
-  const title = id.title || report.query || "";
+  const title = reportTitle(report);
   const publisher = id.publisher || data("scopus").publisher || data("crest").publisher || data("kanalregister").publisher || "";
   const homepage = id.homepage || data("scopus").homepage || data("kanalregister").homepage || (data("journal_site").homepage) || "";
   let host = "";
@@ -551,7 +567,7 @@ export function renderReport(report, opts = {}) {
   ].filter(Boolean));
   return h("div", { class: "report" },
     h("div", { class: "identity" },
-      h("div", { class: "id-row" }, h("h2", {}, id.title || report.query),
+      h("div", { class: "id-row" }, h("h2", {}, reportTitle(report)),
         opts.onStar && h("button", { type: "button", class: `star ${opts.saved ? "on" : ""}`, onclick: opts.onStar,
           "aria-pressed": opts.saved ? "true" : "false", title: opts.saved ? "Remove from saved journals" : "Save this journal" },
           opts.saved ? "★ Saved" : "☆ Save journal")),

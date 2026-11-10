@@ -2,11 +2,11 @@
 // Reads reports your PC has produced (synced through your Supabase project) and
 // queues new lookups, which the PC runs the next time it syncs.
 import { SUPABASE_KEY, SUPABASE_URL } from "./config.js";
-import { apcFromSources, findSaved, h, issnRecordIssns, issnSource, journalKey, missingSections, parseIssnRecord, normaliseIssn, normaliseTitle, parseScopusEntry, renderSaved, quickReport, renderCandidates, renderReport, scopusCandidates, scopusEntries } from "./report-view.js";
+import { apcFromSources, findSaved, h, issnRecordIssns, reportTitle, issnSource, journalKey, missingSections, parseIssnRecord, normaliseIssn, normaliseTitle, parseScopusEntry, renderSaved, quickReport, renderCandidates, renderReport, scopusCandidates, scopusEntries } from "./report-view.js";
 import { AuthError, Supabase, SyncError } from "./supabase.js";
 import { discover, recordToReport, renderDiscover } from "./discover.js";
 
-const APP_VERSION = "2026.11.14";   // shown at the bottom of the home screen; bump with each phone change
+const APP_VERSION = "2026.11.15";   // shown at the bottom of the home screen; bump with each phone change
 const root = document.getElementById("root");
 const LS = {
   get: (k, d = null) => { try { const v = localStorage.getItem("js." + k); return v === null ? d : JSON.parse(v); } catch { return d; } },
@@ -20,6 +20,7 @@ const state = {
   reports: LS.get("reports", {}),     // uid -> row (without deleted ones)
   saved: LS.get("saved", {}),         // saved (starred) journals: uid -> row
   requests: LS.get("requests", {}),   // uid -> row
+  reqLabels: LS.get("reqLabels", {}), // request uid -> journal name shown instead of the ISSN searched (phone only)
   cursors: LS.get("cursors", {}),
   view: { name: "home" },
   filter: "",
@@ -39,6 +40,8 @@ function save() {
   LS.set("requests", state.requests);
   LS.set("cursors", state.cursors);
   LS.set("saved", state.saved);
+  for (const k of Object.keys(state.reqLabels)) if (!state.requests[k]) delete state.reqLabels[k];
+  LS.set("reqLabels", state.reqLabels);
 }
 
 // ------------------------------------------------------------------ auth
@@ -52,8 +55,8 @@ async function token() {
 }
 
 function signOut() {
-  for (const k of ["session", "reports", "requests", "cursors", "saved"]) LS.del(k);
-  Object.assign(state, { session: null, reports: {}, requests: {}, cursors: {}, saved: {}, view: { name: "home" } });
+  for (const k of ["session", "reports", "requests", "cursors", "saved", "reqLabels"]) LS.del(k);
+  Object.assign(state, { session: null, reports: {}, requests: {}, reqLabels: {}, cursors: {}, saved: {}, view: { name: "home" } });
   render();
 }
 
@@ -115,12 +118,13 @@ function schedule() {
 }
 document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") sync(); else clearTimeout(timer); });
 
-async function requestLookup(query, site, sid = null, reportUid = null) {
+async function requestLookup(query, site, sid = null, reportUid = null, label = null) {
   const row = { uid: uid(), query, site: site || null, sid, status: "pending", created_at: now(), updated_at: now() };
   if (reportUid) row.report_uid = reportUid;   // the PC replaces that report instead of adding a new one
   try {
     await sb().insert("journal_requests", row, await token());
     state.requests[row.uid] = row;
+    if (label && label !== query) state.reqLabels[row.uid] = label;
     save();
     state.view = { name: "waiting", request: row.uid };
   } catch (e) {
@@ -366,7 +370,7 @@ function requestRow(r) {
     actions = [h("button", { class: "link", onclick: () => { state.view = { name: "candidates", request: r.uid }; render(); } }, "Choose"),
       h("button", { class: "link", onclick: () => dismissRequest(r) }, "Dismiss")];
   } else text = "Finished; fetching the report…";
-  return h("li", { class: `req ${r.status}` }, h("b", {}, r.query), h("span", {}, text), actions.length && h("div", { class: "acts" }, actions));
+  return h("li", { class: `req ${r.status}` }, h("b", {}, state.reqLabels[r.uid] || r.query), h("span", {}, text), actions.length && h("div", { class: "acts" }, actions));
 }
 
 function homeScreen() {
@@ -382,7 +386,7 @@ function homeScreen() {
     const shown = f ? reports.filter((r) => (r.title + " " + r.query + " " + (r.issns || []).join(" ")).toLowerCase().includes(f)) : reports;
     list.replaceChildren(...(shown.length ? shown.map((r) => h("li", {},
       h("button", { type: "button", onclick: () => { state.view = { name: "report", uid: r.uid }; render(); window.scrollTo(0, 0); } },
-        h("b", {}, r.title || r.query),
+        h("b", {}, /^\s*\d{4}-?\d{3}[\dXx]\s*$/.test(r.title || "") || !r.title ? reportTitle(r.report) || r.query : r.title),
         h("small", {}, [(r.issns || [])[0], dateFmt(r.created_at)].filter(Boolean).join(" · ")),
         miniChips(r.report && r.report.glance)))) : [h("li", { class: "empty" }, f ? "No reports match." : "Reports from your PC appear here.")]));
   }
@@ -434,7 +438,7 @@ async function toggleStar(report) {
       delete state.saved[entry.uid];
     } else {
       const id = report.identity || {};
-      const row = { uid: journalKey(report), title: id.title || report.query || "", issns: id.issns || [],
+      const row = { uid: journalKey(report), title: reportTitle(report), issns: id.issns || [],
         report: { ...report, created_at: report.created_at || now }, deleted: false, created_at: now, updated_at: now };
       await sb().upsert("journal_saved", [row], t);
       state.saved[row.uid] = row;
@@ -467,7 +471,7 @@ function savedReportScreen(uid) {
   return h("div", {}, backBar(),
     renderReport(rep, { ...starOpts(rep), extra: h("div", { class: "actions" },
       h("button", { class: "secondary", onclick: () => { state.back = { name: "savedReport", uid }; quickSearch(issn || item.title, ""); } }, "Check again now"),
-      h("button", { class: "secondary", onclick: () => requestLookup(issn || item.title, "", null) }, "Get full report from my PC")) }),
+      h("button", { class: "secondary", onclick: () => requestLookup(issn || item.title, "", null, null, item.title) }, "Get full report from my PC")) }),
     h("p", { class: "foot" }, `Saved ${dateFmt(item.created_at)}${rep.quick ? " from a quick check" : ""}.`));
 }
 
@@ -481,7 +485,7 @@ async function updateOlderReports(rows) {
   let sent = 0;
   for (const r of rows) {
     const row = { uid: uid(), query: redoQuery(r.report), site: null, sid: null, report_uid: r.uid, status: "pending", created_at: now(), updated_at: now() };
-    try { await sb().insert("journal_requests", row, t); state.requests[row.uid] = row; sent++; }
+    try { await sb().insert("journal_requests", row, t); state.requests[row.uid] = row; state.reqLabels[row.uid] = reportTitle(r.report); sent++; }
     catch (e) { state.error = "Could not send the request: " + e.message; break; }
   }
   save();
@@ -497,7 +501,7 @@ function reportScreen(id) {
     missing.length > 0 && h("div", { class: "outdated" },
       h("p", { class: "note" }, `Made before ${missing.join(", ")} ${missing.length > 1 ? "were" : "was"} added.`),
       pendingUpdate(id) ? h("p", { class: "note" }, "Update requested; your PC will replace this report.")
-        : h("button", { class: "secondary", onclick: () => requestLookup(redoQuery(row.report), "", null, id) }, "Update this report on my PC")),
+        : h("button", { class: "secondary", onclick: () => requestLookup(redoQuery(row.report), "", null, id, reportTitle(row.report)) }, "Update this report on my PC")),
     renderReport(row.report, starOpts(row.report)),
     h("p", { class: "foot" }, `Checked ${dateFmt(row.created_at)} on your PC.`),
     h("button", { class: "danger", onclick: () => deleteReport(id) }, "Delete report"));
@@ -531,7 +535,7 @@ function quickScreen(v) {
     h("div", { class: "actions" },
       full && h("button", { class: "secondary", onclick: () => { state.view = { name: "report", uid: full.uid }; render(); window.scrollTo(0, 0); } },
         `Open full report (${dateFmt(full.created_at)})`),
-      h("button", { class: "secondary", onclick: () => requestLookup(v.query, v.site, v.sid) },
+      h("button", { class: "secondary", onclick: () => requestLookup(v.query, v.site, v.sid, null, reportTitle(v.report)) },
         full ? "Refresh full report on my PC" : "Get full report from my PC")),
     h("p", { class: "note" }, "Instant check from SCImago's SJR list, Scopus and the CREST and SANLiC lists. The full report adds Kanalregister and the journal's own statistics; your PC runs it when it is on."),
     renderReport(v.report, starOpts(v.report)));

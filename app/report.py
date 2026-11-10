@@ -9,7 +9,7 @@ import time
 
 from .fetch import Fetcher
 from .sources import ERROR, FOUND, apc, crest, guidelines, issn_portal, journal_site, kanalregister, sanlic, scopus, sjr, source_result
-from .util import looks_like_issn, normalise_issn
+from .util import looks_like_issn, normalise_issn, report_title
 
 
 def _glance(report: dict) -> list[dict]:
@@ -163,6 +163,7 @@ def partial_report(query: str, results: dict) -> dict:
                            "issns": sd.get("issns") or kd.get("issns") or [],
                            "publisher": sd.get("publisher") or kd.get("publisher"), "country": kd.get("country"),
                            "homepage": sd.get("homepage") or kd.get("homepage")}}
+    report["identity"]["title"] = report_title(report)
     report["glance"] = _glance(report)
     return report
 
@@ -296,5 +297,6 @@ async def build_report(
         "country": sjd.get("country") or kd.get("country") or pd.get("country"),
         "homepage": homepage or kd.get("homepage"),
     }
+    report["identity"]["title"] = report_title(report)   # the journal's name, not the ISSN searched
     report["glance"] = _glance(report)
     return report

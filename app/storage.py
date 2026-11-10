@@ -14,7 +14,7 @@ import uuid
 from contextlib import contextmanager
 from pathlib import Path
 
-from .util import journal_key, normalise_title, outdated
+from .util import journal_key, looks_like_issn, normalise_title, outdated, report_title
 
 SCHEMA = """
 create table if not exists reports (
@@ -77,7 +77,7 @@ class Database:
             c.execute(
                 "insert or replace into reports (uid, query, title, issns, report, deleted, dirty, created_at, updated_at)"
                 " values (?, ?, ?, ?, ?, 0, 1, ?, ?)",
-                (uid, report.get("query", ""), ident.get("title") or report.get("query", ""),
+                (uid, report.get("query", ""), report_title(report),
                  json.dumps(ident.get("issns") or []), json.dumps(report), created, now),
             )
         self.refresh_saved(report)   # a starred journal keeps its newest full report
@@ -91,7 +91,8 @@ class Database:
         out = []
         for r in rows:
             rep = json.loads(r["report"])
-            out.append({"uid": r["uid"], "query": r["query"], "title": r["title"],
+            title = r["title"] if r["title"] and not looks_like_issn(r["title"]) else report_title(rep)
+            out.append({"uid": r["uid"], "query": r["query"], "title": title,
                         "issns": json.loads(r["issns"]), "created_at": r["created_at"],
                         "glance": rep.get("glance", []), "outdated": outdated(rep)})
         return out
@@ -173,7 +174,7 @@ class Database:
             c.execute(
                 "insert or replace into saved (uid, title, issns, report, deleted, dirty, created_at, updated_at)"
                 " values (?, ?, ?, ?, 0, 1, ?, ?)",
-                (uid, ident.get("title") or report.get("query", ""), json.dumps(ident.get("issns") or []),
+                (uid, report_title(report), json.dumps(ident.get("issns") or []),
                  json.dumps(rep), created, now))
         return uid
 
@@ -192,8 +193,13 @@ class Database:
     def list_saved(self) -> list[dict]:
         with self._conn() as c:
             rows = c.execute("select * from saved where deleted = 0 order by created_at desc").fetchall()
-        return [{"uid": r["uid"], "title": r["title"], "issns": json.loads(r["issns"]), "report": json.loads(r["report"]),
-                 "created_at": r["created_at"], "updated_at": r["updated_at"]} for r in rows]
+        out = []
+        for r in rows:
+            rep = json.loads(r["report"])
+            title = r["title"] if r["title"] and not looks_like_issn(r["title"]) else report_title(rep) or r["title"]
+            out.append({"uid": r["uid"], "title": title, "issns": json.loads(r["issns"]), "report": rep,
+                        "created_at": r["created_at"], "updated_at": r["updated_at"]})
+        return out
 
     def get_saved(self, uid: str) -> dict | None:
         return next((r for r in self.list_saved() if r["uid"] == uid), None)

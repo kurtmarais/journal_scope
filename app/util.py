@@ -92,3 +92,20 @@ def refresh_query(report: dict) -> str:
     """What to search for to redo a report: its first ISSN (unambiguous), else its title or query."""
     ident = report.get("identity") or {}
     return ((ident.get("issns") or [None])[0] or ident.get("title") or report.get("query") or "").strip()
+
+
+_TITLE_SOURCES = ("scopus", "kanalregister", "crest", "sjr", "sanlic", "issn", "scimago")
+
+
+def report_title(report: dict) -> str:
+    """The journal's name for a report: never just the ISSN that was searched, when any source knows the name."""
+    ident = (report or {}).get("identity") or {}
+    t = ident.get("title")
+    if t and not looks_like_issn(t):
+        return t
+    for k in _TITLE_SOURCES:
+        src = ((report or {}).get("sources") or {}).get(k) or {}
+        v = (src.get("data") or {}).get("title") if src.get("status") == "found" else None
+        if v and not looks_like_issn(v):
+            return v
+    return t or (report or {}).get("query", "")
