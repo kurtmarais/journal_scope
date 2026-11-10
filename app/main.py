@@ -22,7 +22,7 @@ from .fetch import Fetcher
 from .lists import LocalLists
 from .paths import default_data_dir
 from .report import _glance, build_report, partial_report
-from .sources import sjr
+from .sources import issn_portal, sjr
 from .storage import Database
 from .util import REPORT_SECTIONS, normalise_title, refresh_query
 
@@ -131,8 +131,8 @@ async def redo_report(uid: str, live: bool = False) -> dict:
     if old is None:
         raise HTTPException(404, "Report not found.")
     missing = [k for k in REPORT_SECTIONS if k not in (old.get("sources") or {})]
-    if missing == ["sjr"]:   # only the SJR list is new: add it without running every source again
-        rep = await add_sjr(old)
+    if missing and set(missing) <= QUICK_SECTIONS:   # only quick sections are new: add them, don't re-run every source
+        rep = await add_quick_sections(old, missing)
         app.state.db.add_report(rep, uid=uid, keep_created=True)
         app.state.on_report(uid)
         rep = app.state.db.get_report(uid)
@@ -156,15 +156,23 @@ async def redo_report(uid: str, live: bool = False) -> dict:
     return rep
 
 
-async def add_sjr(report: dict) -> dict:
-    """An existing report with SCImago's SJR section added (from the downloaded list; no other source re-run)."""
+QUICK_SECTIONS = {"sjr", "issn"}   # sections that take a second to add to an existing report
+
+
+async def add_quick_sections(report: dict, missing: list[str]) -> dict:
+    """An existing report with the SJR (from the downloaded list) and/or ISSN register sections added."""
     ident = report.get("identity") or {}
+    issns = ident.get("issns") or []
     rep = {k: v for k, v in report.items() if k not in ("uid", "created_at", "saved")}
     rep["sources"] = dict(rep.get("sources") or {})
-    res = await sjr.lookup(app.state.sjr, ident.get("issns") or [], ident.get("title"))
-    if res["status"] == "error":
-        raise HTTPException(502, res["error"])
-    rep["sources"]["sjr"] = res
+    for key in missing:
+        if key == "sjr":
+            res = await sjr.lookup(app.state.sjr, issns, ident.get("title"))
+        else:
+            res = await issn_portal.lookup(app.state.fetcher, issns[0] if issns else None)
+        if res["status"] == "error":
+            raise HTTPException(502, res["error"])
+        rep["sources"][key] = res
     rep["glance"] = _glance(rep)
     return rep
 

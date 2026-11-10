@@ -6,6 +6,7 @@ Checks a journal's validity and credibility for publication by pulling, in one r
 | --- | --- |
 | [SCImago](https://www.scimagojr.com/journalrank.php) (yearly ranking download) | SJR and the **SJR quartile** (Q1–Q4) in each subject category, best quartile, H-index. This is the quartile SCImago, ExCITATION and most rankings use |
 | [Scopus](https://www.scopus.com/sources) (Elsevier API) | Existence and coverage in Scopus, CiteScore with its rank, percentile and CiteScore quartile in each subject (Q1 = 75th percentile and above; can differ from the SJR quartile), homepage link |
+| [ISSN Portal](https://portal.issn.org/) (ISSN register) | Whether the ISSN exists (and a check-digit test for typos), the title it is registered to, the journal's other ISSN (print or online), country and web address. Used to match the journal in the other sources under both of its ISSNs |
 | [CREST ZA Publications Monitor](https://db.crest.sun.ac.za/zapublications/) | DHET subsidy status (eligible / discontinued / delisted / ...) and the stated reason |
 | [Kanalregister](https://kanalregister.hkdir.no/en) | Norwegian Register level (2, 1, 0, X), level history, ceased flag, DOAJ indexing |
 | Journal website | Days to first decision / decision after review / acceptance / publication, acceptance rate, APC, impact factor as reported by the journal |
@@ -13,6 +14,8 @@ Checks a journal's validity and credibility for publication by pulling, in one r
 | [SANLiC](https://sanlic.ac.za/read-and-publish-agreements/) | Whether a SANLiC read-and-publish agreement covers the journal, OA model, explanation, agreement period |
 
 **Saved journals:** the ☆ on a report stars the journal. **★ Saved journals** (above History) opens a table of them: CiteScore and quartile, DHET, SANLiC, Norwegian level, APC, first-decision time and acceptance rate. Click one for its full report, with **Check again** to refresh it. Saved journals are kept apart from history (clearing history doesn't remove them), keep their newest full report automatically, and sync with the phone.
+
+**Searching by ISSN:** the ISSN is first looked up in the ISSN register, which gives the journal's title and its other ISSN. Many lists (CREST, SANLiC, SCImago) and Scopus hold only one of a journal's two ISSNs, so every source is searched with both, and CREST (which searches by title) no longer waits for Kanalregister. A mistyped ISSN is flagged straight away.
 
 **SJR vs CiteScore quartiles:** reports lead with the SJR quartile from SCImago. The CiteScore quartile from Scopus is shown separately and labelled "not SJR"; the two often differ for the same journal. SCImago's ranking is downloaded once a month (SCImago updates it yearly); if SCImago asks for its "are you a person" check, a window opens for you to complete it. Find journals shows each result's SJR quartile and can be filtered to SJR Q1, Q1–Q2 or Q1–Q3.
 

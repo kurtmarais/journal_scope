@@ -145,6 +145,93 @@ function sjrCard(r) {
     r, body, { site: "SCImago", wide: true, chip });
 }
 
+// ------------------------------------------------------------ ISSN register
+const ISSN_PORTAL = "https://portal.issn.org/";
+
+/** ISSNs end in a check digit (mod 11); a typo almost always breaks it. */
+export function issnCheckDigitOk(issn) {
+  const d = String(issn || "").replace("-", "").toUpperCase();
+  if (!/^\d{7}[\dX]$/.test(d)) return false;
+  let total = 0;
+  for (let i = 0; i < 7; i++) total += Number(d[i]) * (8 - i);
+  const check = (11 - (total % 11)) % 11;
+  return d[7] === (check === 10 ? "X" : String(check));
+}
+
+const cleanRecordTitle = (v) => {
+  const t = (v || "").replace(/\s+/g, " ").trim().replace(/\s*[./:;,=]+\s*$/, "");
+  return t ? t[0].toUpperCase() + t.slice(1) : "";
+};
+
+/** The ISSN Portal record page (HTML) -> the same fields as app/sources/issn_portal.py, or null. */
+export function parseIssnRecord(html, issn) {
+  const doc = new DOMParser().parseFromString(html || "", "text/html");
+  const text = (el) => (el ? el.textContent.replace(/\s+/g, " ").trim() : "");
+  const field = (key) => text(doc.querySelector(`[data-key="${key}"]`));
+  if (normaliseIssn(field("issn")) !== issn) return null;
+  const issnL = normaliseIssn((doc.querySelector("[data-issnl]") || { dataset: {} }).dataset.issnl || "");
+  const others = [];
+  for (const a of doc.querySelectorAll('[data-key="other-media"] a[href]')) {
+    const o = normaliseIssn(a.getAttribute("href").split("/").pop());
+    if (o && o !== issn && !others.some((x) => x.issn === o)) others.push({ issn: o, medium: text(a) || null });
+  }
+  const keyTitle = text(doc.querySelector(".record__title .display--primary"));
+  const links = [...new Set([...doc.querySelectorAll('[data-key="resource-link"] a[href]')].map((a) => a.getAttribute("href")))];
+  const country = field("country");
+  return {
+    issn, issn_l: issnL || null, other_issns: others, key_title: keyTitle || null,
+    title: cleanRecordTitle(field("title-proper")) || keyTitle.replace(/\s*\((?:Print|Online)\)\s*$/, "") || null,
+    variants: [...doc.querySelectorAll('[data-key="title-variants"]')].map((e) => cleanRecordTitle(text(e))).filter(Boolean),
+    medium: field("medium") || null,
+    country: country && country === country.toUpperCase() ? country.toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase()) : country || null,
+    homepage: links.find((u) => !/oclc\.org|worldcat\.org|issn\.org|ulrichsweb/i.test(u)) || null,
+    links, record_status: text(doc.querySelector("[data-category]")) || null,
+  };
+}
+
+export function issnRecordIssns(d) {
+  const out = [d.issn, ...(d.other_issns || []).map((o) => o.issn), d.issn_l].filter(Boolean);
+  return out.filter((x, i) => out.indexOf(x) === i);
+}
+
+/** The report's ISSN-register section. `record` from parseIssnRecord; `error` when the lookup failed. */
+export function issnSource(issn, record, error) {
+  const url = issn ? `https://portal.issn.org/resource/ISSN/${issn}` : ISSN_PORTAL;
+  if (!issn) return { status: "skipped", data: {}, url, note: "No ISSN to look up." };
+  if (!issnCheckDigitOk(issn)) return { status: "not_found", url, data: { issn, invalid: true },
+    note: `${issn} is not a valid ISSN: its last digit (the check digit) doesn't match. Check for a typo.` };
+  if (error) return { status: "error", data: {}, url, error };
+  if (!record) return { status: "not_found", data: { issn }, url, note: "The ISSN register has no record for this ISSN." };
+  return { status: "found", data: record, url };
+}
+
+export function issnTile(src) {
+  if (!src || src.status !== "not_found") return null;
+  const bad = (src.data || {}).invalid;
+  return { label: "ISSN", value: bad ? "Not a valid ISSN (typo?)" : "No record in the ISSN register", tone: bad ? "bad" : "warn", source: "issn" };
+}
+
+function issnCard(r) {
+  if (!r) return null;                         // reports made before this was added
+  const d = r.data || {};
+  const body = [];
+  if (r.status === "found") {
+    body.push(kv([
+      ["Title", d.title],
+      ["Key title", d.key_title],
+      ["ISSN", [d.issn, d.medium ? h("span", { class: "ctx" }, ` (${d.medium})`) : null]],
+      ["Other ISSN", join((d.other_issns || []).map((o) => [o.issn, o.medium ? h("span", { class: "ctx" }, ` (${o.medium})`) : null]))],
+      ["ISSN-L", d.issn_l && d.issn_l !== d.issn ? d.issn_l : ""],
+      ["Country", d.country],
+      ["Web address", d.homepage ? link(d.homepage, d.homepage.replace(/^https?:\/\//, "").replace(/\/$/, "")) : ""],
+    ]));
+  }
+  const chip = r.status === "found" ? [d.record_status || "Registered", "good"]
+    : r.status === "not_found" ? [d.invalid ? "Invalid ISSN" : "No record", d.invalid ? "bad" : "warn"] : undefined;
+  return card("ISSN register", "Who the ISSN belongs to, and the journal's other ISSN (print or online), from the ISSN Portal.", r, body,
+    { site: "the ISSN Portal", chip });
+}
+
 function scopusCard(r) {
   const d = r.data || {};
   const body = [];
@@ -268,7 +355,7 @@ function siteCard(r) {
 // Sections of a full report, with the name used when telling the user what an older report lacks.
 // Keep in step with REPORT_SECTIONS in app/util.py.
 export const REPORT_SECTIONS = { scopus: "Scopus", crest: "CREST", kanalregister: "Kanalregister", sanlic: "SANLiC",
-  journal_site: "journal statistics", apc: "APC", guidelines: "word and page limits", sjr: "SJR quartile" };
+  journal_site: "journal statistics", apc: "APC", guidelines: "word and page limits", sjr: "SJR quartile", issn: "ISSN register" };
 
 export function missingSections(report) {
   const s = (report && report.sources) || {};
@@ -448,7 +535,7 @@ export function orderGlance(glance) {
 export function glanceTiles(glance) {
   const tile = (g) => h("div", { class: `tile ${g.tone}` },
     h("div", { class: "l" }, g.label), h("div", { class: "v" }, g.value),
-    h("div", { class: "s" }, { sjr: "SCImago", journal_site: "journal site" }[g.source] || g.source.replace("_", " ")));
+    h("div", { class: "s" }, { sjr: "SCImago", journal_site: "journal site", issn: "ISSN register" }[g.source] || g.source.replace("_", " ")));
   const { quart, rest } = orderGlance(glance);
   return h("div", { class: "glance" }, [...quart, ...rest].map(tile));
 }
@@ -471,9 +558,9 @@ export function renderReport(report, opts = {}) {
       h("div", { class: "meta" }, meta), opts.extra || null),
     glanceTiles(report.glance),
     report.timings && Object.keys(report.timings).length > 0 && h("p", { class: "timings" },
-      "Time taken: " + Object.entries(report.timings).map(([k, v]) => `${{ scopus: "Scopus", crest: "CREST", sanlic: "SANLiC", kanalregister: "Kanalregister", journal_site: "journal site", apc: "APC", guidelines: "author guidelines", sjr: "SCImago" }[k] || k} ${v} s`).join(" · ")),
+      "Time taken: " + Object.entries(report.timings).map(([k, v]) => `${{ scopus: "Scopus", crest: "CREST", sanlic: "SANLiC", kanalregister: "Kanalregister", journal_site: "journal site", apc: "APC", guidelines: "author guidelines", sjr: "SCImago", issn: "ISSN register" }[k] || k} ${v} s`).join(" · ")),
     h("div", { class: "cards" },
-      sjrCard(s.sjr), s.scopus ? scopusCard(s.scopus) : s.scimago ? scimagoCard(s.scimago) : null, crestCard(s.crest), kanalCard(s.kanalregister), sanlicCard(s.sanlic), siteCard(s.journal_site), limitsCard(report), apcCard(report), templatesCard(report)));
+      sjrCard(s.sjr), s.scopus ? scopusCard(s.scopus) : s.scimago ? scimagoCard(s.scimago) : null, issnCard(s.issn), crestCard(s.crest), kanalCard(s.kanalregister), sanlicCard(s.sanlic), siteCard(s.journal_site), limitsCard(report), apcCard(report), templatesCard(report)));
 }
 
 export function renderCandidates(query, candidates, onPick) {
@@ -599,7 +686,7 @@ function sanlicSource(r, meta) {
     agreement_page: page ? `https://sanlic.ac.za/${page}/` : null, title_list: meta && meta.source_url } };
 }
 
-export function quickReport(query, { scopus, scopusNote, scopusError, crest, sanlic, lists, issns, title, apc, sjr }) {
+export function quickReport(query, { scopus, scopusNote, scopusError, crest, sanlic, lists, issns, title, apc, sjr, issn, homepage }) {
   const meta = Object.fromEntries((lists || []).map((l) => [l.key, l]));
   const sj = scopusSource(scopus, scopusNote, scopusError);
   const kanalTerm = (issns || [])[0] || title || query;
@@ -618,10 +705,13 @@ export function quickReport(query, { scopus, scopusNote, scopusError, crest, san
       note: "Word and page limits are read from the journal's author guidelines by your PC. Get the full report from your PC, or open the guidelines from the Templates card." },
     sjr: sjrSource(sjr, meta.sjr),
   };
+  if (issn) sources.issn = issn;
   const glance = [];
   let indexed = null;
   const st = sjrTile(sources.sjr);
   if (st) glance.push(st);
+  const it = issnTile(sources.issn);
+  if (it) glance.push(it);
   if (sj.status === "found") {
     const d = sj.data;
     const last = d.coverage_last_year || (d.citescore && d.citescore.year);
@@ -647,7 +737,8 @@ export function quickReport(query, { scopus, scopusNote, scopusError, crest, san
   if (indexed) glance.push(indexed);
   return {
     query, quick: true, candidates: [], glance, sources,
-    identity: { title: title || query, issns: issns || [], publisher: sj.data.publisher || (c.data && c.data.publisher), country: sj.data.country },
+    identity: { title: title || query, issns: issns || [], publisher: sj.data.publisher || (c.data && c.data.publisher),
+      country: sj.data.country || (issn && issn.data && issn.data.country) || null, homepage: sj.data.homepage || homepage || null },
   };
 }
 

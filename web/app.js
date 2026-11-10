@@ -2,11 +2,11 @@
 // Reads reports your PC has produced (synced through your Supabase project) and
 // queues new lookups, which the PC runs the next time it syncs.
 import { SUPABASE_KEY, SUPABASE_URL } from "./config.js";
-import { apcFromSources, findSaved, h, journalKey, missingSections, normaliseIssn, normaliseTitle, parseScopusEntry, renderSaved, quickReport, renderCandidates, renderReport, scopusCandidates, scopusEntries } from "./report-view.js";
+import { apcFromSources, findSaved, h, issnRecordIssns, issnSource, journalKey, missingSections, parseIssnRecord, normaliseIssn, normaliseTitle, parseScopusEntry, renderSaved, quickReport, renderCandidates, renderReport, scopusCandidates, scopusEntries } from "./report-view.js";
 import { AuthError, Supabase, SyncError } from "./supabase.js";
 import { discover, recordToReport, renderDiscover } from "./discover.js";
 
-const APP_VERSION = "2026.11.13";   // shown at the bottom of the home screen; bump with each phone change
+const APP_VERSION = "2026.11.14";   // shown at the bottom of the home screen; bump with each phone change
 const root = document.getElementById("root");
 const LS = {
   get: (k, d = null) => { try { const v = localStorage.getItem("js." + k); return v === null ? d : JSON.parse(v); } catch { return d; } },
@@ -165,6 +165,12 @@ async function quickSearch(query, site, sourceId = null) {
     const api = sb();
     const issn = sourceId || normaliseIssn(query);
     const lists = await api.select("ref_lists", {}, t);
+    // The ISSN register: the title and the journal's other ISSN (print <-> online), so lists that hold only one still match.
+    const typedIssn = normaliseIssn(query);
+    const portalPromise = typedIssn ? api.request("GET", "/functions/v1/discover", { token: t, params: { source: "issnportal", mode: "issn", q: typedIssn } })
+      .then((r) => ({ record: r.status === 404 ? null : parseIssnRecord(r.html, typedIssn) }))
+      .catch((e) => ({ error: /unknown source|404/i.test(e.message) ? "Redeploy the 'discover' Edge Function to look ISSNs up in the ISSN register." : e.message }))
+      : Promise.resolve(null);
     let scopus = null, scopusNote = null, scopusError = null;
     try {
       if (issn) {
@@ -188,8 +194,19 @@ async function quickSearch(query, site, sourceId = null) {
         ? "The Scopus lookup isn't set up yet: deploy the 'scopus' Edge Function (docs/phone-setup.md)."
         : "Scopus lookup failed: " + e.message;
     }
-    const issns = scopus ? scopus.issns : issn ? [issn] : [];
-    const title = scopus ? scopus.title : issn ? null : query;
+    const portal = await portalPromise;
+    const record = portal && portal.record;
+    if (!scopus && record && !scopusError) {          // Scopus may hold the journal under its other ISSN
+      for (const other of issnRecordIssns(record).slice(1)) {
+        try {
+          const payload = await scopusLookup(api, t, { issn: other });
+          const entry = scopusEntries(payload)[0];
+          if (entry) { scopus = parseScopusEntry(entry, !!payload._limited); break; }
+        } catch { /* keep what we have */ }
+      }
+    }
+    const issns = [...new Set([...(scopus ? scopus.issns : issn ? [issn] : []), ...(record ? issnRecordIssns(record) : [])])];
+    const title = scopus ? scopus.title : issn ? (record && record.title) || null : query;
     const inList = `(${issns.join(",")})`;
     const apcPromise = (async () => {
       if (!issns.length) return null;
@@ -210,7 +227,9 @@ async function quickSearch(query, site, sourceId = null) {
     const sanlic = sanlicRows[0] || (norm ? (await api.select("ref_sanlic", { title_norm: `eq.${norm}`, limit: "1" }, t))[0] : null) || null;
     const sjr = sjrRows[0] || (norm && sjrList ? (await api.select("ref_sjr", { title_norm: `eq.${norm}`, limit: "2" }, t).catch(() => [])).filter((_, i, a) => a.length === 1)[0] : null) || null;
     const apc = await apcPromise;
-    const report = quickReport(query, { scopus, scopusNote, scopusError, crest, sanlic, sjr, lists, issns, title, apc });
+    const issnSrc = typedIssn ? issnSource(typedIssn, record || null, portal && portal.error) : null;
+    const report = quickReport(query, { scopus, scopusNote, scopusError, crest, sanlic, sjr, lists, issns,
+      title: (scopus && scopus.title) || (crest && crest.title) || (sjr && sjr.title) || title, apc, issn: issnSrc, homepage: record && record.homepage });
     state.view = { name: "quick", query, site, report, sid: issns[0] || null, listsLoaded: lists.length > 0 };
   } catch (e) {
     state.view = { name: "quick", query, site, error: e.message };

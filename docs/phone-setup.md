@@ -14,7 +14,7 @@ Three things still need the PC, because they need a browser engine: the **Kanalr
  runs the lookups                   reports + requests                (static files on Cloudflare)
 ```
 
-- **Checking on the phone:** type a title or ISSN and tap **Check journal**. The result is instant and comes from the lists. If a title matches several journals you choose one.
+- **Checking on the phone:** type a title or ISSN and tap **Check journal**. The result is instant and comes from the lists. If a title matches several journals you choose one. An ISSN is also looked up in the ISSN register, so the journal is found under both its print and online ISSN (this needs the latest `discover` function; redeploy it after updating).
 - **Saved journals:** tap **☆ Save journal** on any report. **★ Saved journals** (above the report list) shows them in a table; tap one for its report. They are kept in Supabase, so clearing history or reinstalling the app doesn't lose them, and the PC shows the same list.
 - **Finding journals:** the second search bar lists journals for a keyword, by title or by what they publish (scope), each with its DHET and SANLiC status. Tap one for its check.
 - **Full report:** tap **Get full report from my PC**. The PC picks it up within 20 seconds when Journal Scope is running there (the tray counts); otherwise it waits until the PC is next on. Full reports appear in the phone's list.
@@ -47,7 +47,7 @@ This project has its own users, so create an account here even if you have one i
 2. In Supabase: **Edge Functions → Secrets** (or Project Settings → Edge Functions): add `ELSEVIER_API_KEY` with your key. If your library gave you an institution token, add it as `ELSEVIER_INSTTOKEN`.
 3. **Edge Functions → Deploy a new function → Via Editor**. Name it exactly `scopus`, replace the sample code with the contents of [`supabase/functions/scopus/index.ts`](../supabase/functions/scopus/index.ts), and click **Deploy**. Leave "Verify JWT" on, so only you (signed in) can use it.
 
-4. Deploy a second function the same way for **Find journals**: name it exactly `discover`, with the contents of [`supabase/functions/discover/index.ts`](../supabase/functions/discover/index.ts). It uses the same `ELSEVIER_API_KEY` secret. Optionally add an `OPENALEX_API_KEY` secret (free from https://openalex.org/settings/api); without it OpenAlex still works but shares a small daily allowance with everyone else using Supabase's servers.
+4. Deploy a second function the same way for **Find journals** and ISSN lookups in the ISSN register: name it exactly `discover`, with the contents of [`supabase/functions/discover/index.ts`](../supabase/functions/discover/index.ts). It uses the same `ELSEVIER_API_KEY` secret. Optionally add an `OPENALEX_API_KEY` secret (free from https://openalex.org/settings/api); without it OpenAlex still works but shares a small daily allowance with everyone else using Supabase's servers.
 
 CiteScore quartiles need institutional access. Elsevier grants it to requests from your university's network, and the Edge Function runs in Supabase's cloud, so without an institution token the phone shows CiteScore but says the subject ranks weren't available. The desktop app on the university network or VPN gets them with the key alone.
 

@@ -240,3 +240,18 @@ def test_sjr_list_lookup(tmp_path):
     assert res["url"] == "https://www.scimagojr.com/journalsearch.php?q=23571&tip=sid"
     assert asyncio.run(sjr.lookup(lst, [], "Information Systems Journal"))["data"]["sjr"] == 2.103
     assert asyncio.run(sjr.lookup(lst, ["0000-0000"], "Nope"))["status"] == "not_found"
+
+
+def test_issn_portal_record():
+    from app.sources import issn_portal
+    d = issn_portal.parse_record(read("issn_portal_1532-0464.html"), "1532-0464")
+    assert d["title"] == "Journal of biomedical informatics" and d["key_title"] == "Journal of biomedical informatics (Print)"
+    assert d["issn_l"] == "1532-0464" and d["other_issns"] == [{"issn": "1532-0480", "medium": "Online"}]
+    assert d["medium"] == "Print" and d["country"] == "United States" and d["record_status"] == "Confirmed record"
+    assert d["homepage"] == "http://www.sciencedirect.com/science/journal/15320464"     # not the OCLC catalogue link
+    assert d["variants"] == ["Biomedical informatics"]
+    assert issn_portal.all_issns(d) == ["1532-0464", "1532-0480"]
+    assert issn_portal.parse_record(read("issn_portal_1532-0464.html"), "1532-0480") is None   # a different ISSN's page
+    assert issn_portal.check_digit_ok("1532-0464") and issn_portal.check_digit_ok("0258-5200")
+    assert issn_portal.check_digit_ok("2049-3630") and issn_portal.check_digit_ok("0000-0019")
+    assert not issn_portal.check_digit_ok("1532-0465")

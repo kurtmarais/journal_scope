@@ -162,6 +162,8 @@ def test_phone_searches_lists_without_pc(tmp_path):
             a, b = await q.nth(0).bounding_box(), await q.nth(1).bounding_box()
             assert abs(a["y"] - b["y"]) < 1 and b["x"] > a["x"] and "CiteScore" in await q.nth(1).inner_text()
             assert "Indexed in Scopus" in await q.last.inner_text()
+            reg = page.locator("article:has(h3:has-text('ISSN register'))")
+            assert "1532-0464 (Print)" in await reg.inner_text() and "Confirmed record" in await reg.inner_text()
             assert await page.is_visible("article:has(h3:has-text('Kanalregister')) >> text=Not checked")
             guide = page.locator(".templates a", has_text="Author guidelines for this journal")
             assert await guide.get_attribute("href") == \
@@ -194,6 +196,21 @@ def test_phone_searches_lists_without_pc(tmp_path):
             await page.click("button:has-text('Check journal')")
             await page.wait_for_selector("text=Not in Scopus")
             assert await page.is_visible(".tile:has-text('Not ranked by SCImago')")
+            assert await page.is_visible(".tile:has-text('No record in the ISSN register')")
+
+            # An ISSN Scopus doesn't answer for, whose journal the lists know by its other ISSN
+            await page.click("text=‹ Back")
+            await page.fill("input[name=q]", "2049-3630")
+            await page.click("button:has-text('Check journal')")
+            await page.wait_for_selector("h2:has-text('Information Systems Journal')")
+            assert "Q1 (SJR 2.103)" in await page.locator(".tile").first.inner_text()
+            assert "1350-1917 (Print)" in await page.locator("article:has(h3:has-text('ISSN register'))").inner_text()
+
+            # A mistyped ISSN is flagged
+            await page.click("text=‹ Back")
+            await page.fill("input[name=q]", "1532-0465")
+            await page.click("button:has-text('Check journal')")
+            await page.wait_for_selector(".tile.bad:has-text('Not a valid ISSN (typo?)')")
 
             assert not errors, errors
             await browser.close()
@@ -476,7 +493,7 @@ def test_phone_updates_older_reports_through_the_pc(tmp_path):
             await page.click("button:has-text('Sign in')")
             await page.wait_for_selector("button:has-text('Update 1 older report on my PC')")
             await page.click(".reports button")
-            await page.wait_for_selector("text=Made before word and page limits, SJR quartile were added.")
+            await page.wait_for_selector("text=Made before word and page limits, SJR quartile, ISSN register were added.")
             await page.click("button:has-text('Back')")
             await page.click("button:has-text('Update 1 older report on my PC')")
             await page.wait_for_selector("text=Waiting for your PC")

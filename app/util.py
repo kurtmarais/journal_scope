@@ -79,7 +79,7 @@ def journal_key(report: dict) -> str:
 
 
 # Sections of a full report. Bump when a source is added, so older reports can be updated.
-REPORT_SECTIONS = ("scopus", "crest", "kanalregister", "sanlic", "journal_site", "apc", "guidelines", "sjr")
+REPORT_SECTIONS = ("scopus", "crest", "kanalregister", "sanlic", "journal_site", "apc", "guidelines", "sjr", "issn")
 
 
 def outdated(report: dict) -> bool:

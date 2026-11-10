@@ -51,6 +51,10 @@ class FakeFetcher:
         if "doaj.org" in url:
             r.status_code, r.text = 200, '{"results": []}'
             return r
+        if "portal.issn.org" in url:
+            page = FIX / f"issn_portal_{url.rsplit('/', 1)[-1]}.html"
+            r.status_code, r.text = (200, page.read_text()) if page.exists() else (404, "Not found")
+            return r
         if "scimagojr.com" in url:
             r.content = (FIX / "scimagojr_sample.csv").read_bytes()
             r.status_code, r.text = 200, r.content.decode()
@@ -93,7 +97,7 @@ def test_full_report(tmp_path):
     r = asyncio.run(build_report(fetcher, "1532-0464", scopus_key="test-key", sjr_list=SjrList(fetcher, tmp_path)))
     s = r["sources"]
     assert {k: v["status"] for k, v in s.items()} == {
-        "scopus": "found", "crest": "found", "kanalregister": "found", "sanlic": "found", "journal_site": "found", "apc": "found", "guidelines": "found", "sjr": "found",
+        "scopus": "found", "crest": "found", "kanalregister": "found", "sanlic": "found", "journal_site": "found", "apc": "found", "guidelines": "found", "sjr": "found", "issn": "found",
     }
     assert s["apc"]["data"]["openalex"]["apc_usd"] == 3550
     tile = next(g for g in r["glance"] if g["label"] == "APC")
@@ -138,7 +142,8 @@ def test_scopus_falls_back_when_citescore_view_is_refused(tmp_path):
     real_get = fetcher.get
 
     async def get(url, headers=None):
-        seen.append(url.rsplit("view=", 1)[-1])
+        if "elsevier" in url:
+            seen.append(url.rsplit("view=", 1)[-1])
         r = await real_get(url, headers)
         if "view=CITESCORE" in url:
             r.status_code, r.text = 400, '{"service-error":{"status":{"statusCode":"INVALID_INPUT","statusText":"View not allowed"}}}'
@@ -166,7 +171,7 @@ def test_hanging_source_times_out_without_blocking_the_report(tmp_path, monkeypa
     k = r["sources"]["kanalregister"]
     assert k["status"] == "error" and "No answer within 0.3 seconds" in k["error"]
     assert r["sources"]["crest"]["status"] == "found" and r["sources"]["journal_site"]["status"] == "found"
-    assert set(r["timings"]) == {"scopus", "crest", "sanlic", "kanalregister", "journal_site", "apc", "guidelines", "sjr"}
+    assert set(r["timings"]) == {"scopus", "crest", "sanlic", "kanalregister", "journal_site", "apc", "guidelines", "sjr", "issn"}
     assert seen["kanalregister"] == "error" and seen["scopus"] == "found"
 
 
@@ -215,3 +220,30 @@ def test_apc_tile_priorities():
     free = {"sources": {**base["sources"], "apc": {"status": "found", "data": {"doaj": {"has_apc": False, "prices": []}}}}}
     assert apc_tile(free) == {"label": "APC", "value": "No APC", "tone": "good", "source": "doaj"}
     assert apc_tile(base) is None
+
+
+def test_issn_search_uses_the_issn_register(tmp_path, monkeypatch):
+    """Without Scopus, the ISSN register supplies the title (for CREST) and the journal's other ISSN."""
+    from app.sources import kanalregister
+    from app.sources.sjr import SjrList
+
+    async def no_kanal(*a, **k):   # Kanalregister unavailable: the title must come from the register
+        return {"source": "Kanalregister", "status": "error", "data": {}, "error": "down"}
+
+    monkeypatch.setattr(kanalregister, "lookup", no_kanal)
+    fetcher = FakeFetcher(make_xlsx(tmp_path / "l.xlsx"))
+    r = asyncio.run(build_report(fetcher, "1532-0464", sjr_list=SjrList(fetcher, tmp_path)))   # no Scopus key
+    s = r["sources"]
+    assert s["issn"]["status"] == "found" and s["issn"]["data"]["other_issns"][0]["issn"] == "1532-0480"
+    assert r["identity"]["issns"] == ["1532-0464", "1532-0480"]
+    assert s["crest"]["status"] == "found"                     # searched by the register's title
+    assert s["sjr"]["data"]["quartile"] == "Q1"
+    assert r["identity"]["title"] == "Journal of Biomedical Informatics"   # CREST's capitalisation
+    assert r["identity"]["homepage"] == "http://www.sciencedirect.com/science/journal/15320464"
+
+
+def test_mistyped_issn_is_flagged(tmp_path):
+    fetcher = FakeFetcher(make_xlsx(tmp_path / "l.xlsx"))
+    r = asyncio.run(build_report(fetcher, "1532-0465"))
+    assert r["glance"][0] == {"label": "ISSN", "value": "Not a valid ISSN (typo?)", "tone": "bad", "source": "issn"}
+    assert "check digit" in r["sources"]["issn"]["note"]

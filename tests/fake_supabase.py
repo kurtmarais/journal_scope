@@ -143,6 +143,9 @@ class FakeSupabase:
         fix = Path(__file__).parent / "fixtures"
         self.discover_calls = getattr(self, "discover_calls", []) + [dict(q)]
         if q.get("mode") == "issn":
+            if q.get("source") == "issnportal":
+                page = fix / f"issn_portal_{q.get('q')}.html"
+                return 200, {"status": 200 if page.exists() else 404, "html": page.read_text() if page.exists() else ""}
             if q.get("source") == "openalex":
                 srcs = [s for s in json.loads((fix / "openalex_title.json").read_text())["sources"] if q.get("q") in (s.get("issn") or [])]
                 return 200, {"sources": srcs[:1]}

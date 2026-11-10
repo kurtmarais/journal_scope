@@ -8,6 +8,7 @@
 //   GET /functions/v1/discover?source=doaj&mode=title|scope&q=...
 //   GET /functions/v1/discover?source=scopus&q=...                  (scope only)
 //   GET /functions/v1/discover?source=openalex|doaj&mode=issn&q=ISSN (one journal, for its APC)
+//   GET /functions/v1/discover?source=issnportal&mode=issn&q=ISSN   (the ISSN register's record page; the app reads it)
 //
 // Secrets: ELSEVIER_API_KEY (for Scopus), optional ELSEVIER_INSTTOKEN,
 // optional OPENALEX_API_KEY (own daily allowance instead of a shared one).
@@ -101,6 +102,16 @@ async function scopus(q: string): Promise<unknown> {
   }
 }
 
+async function issnPortal(q: string): Promise<unknown> {
+  const issn = q.toUpperCase();
+  if (!ISSN.test(issn)) throw new Error("not an ISSN");
+  const resp = await fetch(`https://portal.issn.org/resource/ISSN/${issn}`,
+    { headers: { Accept: "text/html" }, signal: AbortSignal.timeout(15000) });
+  if (resp.status === 404) return { status: 404, html: "" };
+  if (!resp.ok) throw new Error(`ISSN Portal HTTP ${resp.status}`);
+  return { status: resp.status, html: (await resp.text()).slice(0, 400000) };
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: cors });
   const u = new URL(req.url).searchParams;
@@ -112,6 +123,7 @@ Deno.serve(async (req) => {
     if (source === "openalex") return reply(await openalex(mode, q));
     if (source === "doaj") return reply(await doaj(mode, q));
     if (source === "scopus") return reply(await scopus(q));
+    if (source === "issnportal" && mode === "issn") return reply(await issnPortal(q));
     return reply({ error: "unknown source" }, 404);
   } catch (e) {
     return reply({ error: e instanceof Error ? e.message : String(e) }, 502);
